@@ -168,7 +168,14 @@ public partial class MainWindow : Window
 
             // Served files can be cached across runs; after an update the deck must never run
             // yesterday's scripts against today's host.
-            await Web.CoreWebView2.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache);
+            try
+            {
+                await Web.CoreWebView2.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache);
+            }
+            catch
+            {
+                // A stale cache is better than a blank deck — fall through and navigate anyway.
+            }
 
             Web.CoreWebView2.SetVirtualHostNameToFolderMapping(
                 UiHost, Path.Combine(AppContext.BaseDirectory, "ui"), CoreWebView2HostResourceAccessKind.Deny);
@@ -413,7 +420,7 @@ public partial class MainWindow : Window
 
             _config.Presets.Remove(preset);
             _config.Hotkeys.RemoveAll(h => h.Action == WidgetCatalog.PresetActionPrefix + reference);
-            ApplyHotkeys(notifyOnConflict: false);
+            if (_hotkeyWindow is null) ApplyHotkeys(notifyOnConflict: false);
         }
         else if (kind == "shortcut" && _config.Shortcuts.FirstOrDefault(s => s.Id == reference) is { } shortcut)
         {

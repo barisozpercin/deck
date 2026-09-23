@@ -249,7 +249,7 @@ const Widgets = {
     click: (variant) => (variant === 'wide' ? null : 'press'),
     context: (variant) => (variant === 'wide' ? null : 'next'),
     template: (variant) => variant === 'wide'
-      ? `<div class="np-art">${ICONS.record}<img alt="" hidden></div>
+      ? `<div class="np-art">${ICONS.record}<img alt="" hidden draggable="false"></div>
          <div class="np-body">
            ${NP_TEXT}
            <div class="np-controls">

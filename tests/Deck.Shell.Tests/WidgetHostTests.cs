@@ -3,7 +3,7 @@ using Deck.Shell.Widgets;
 
 namespace Deck.Shell.Tests;
 
-internal sealed class FakeWidget(string kind, string? reference, bool failOnStart) : IWidget
+internal sealed class FakeWidget(string kind, string? reference, bool failOnStart, bool failOnPush = false) : IWidget
 {
     public string Kind { get; } = kind;
     public string? Ref { get; } = reference;
@@ -20,7 +20,12 @@ internal sealed class FakeWidget(string kind, string? reference, bool failOnStar
     }
 
     public void Stop() => Stops++;
-    public void Push() => Pushes++;
+
+    public void Push()
+    {
+        Pushes++;
+        if (failOnPush && Pushes == 1) throw new InvalidOperationException("push boom");
+    }
 
     public bool Handle(string message)
     {
@@ -36,10 +41,15 @@ public class WidgetHostTests
     private readonly List<FakeWidget> _created = [];
     private readonly List<(string Kind, string? Ref)> _failures = [];
 
-    private WidgetHost NewHost(Func<WidgetPlacement, bool>? fails = null) => new(
+    private WidgetHost NewHost(
+        Func<WidgetPlacement, bool>? fails = null,
+        Func<WidgetPlacement, bool>? failsOnPush = null,
+        Func<WidgetPlacement, bool>? throwsOnCreate = null) => new(
         p =>
         {
-            var widget = new FakeWidget(p.Kind, p.Ref, fails?.Invoke(p) ?? false);
+            if (throwsOnCreate?.Invoke(p) ?? false) throw new InvalidOperationException("create boom");
+
+            var widget = new FakeWidget(p.Kind, p.Ref, fails?.Invoke(p) ?? false, failsOnPush?.Invoke(p) ?? false);
             _created.Add(widget);
             return widget;
         },
@@ -118,6 +128,37 @@ public class WidgetHostTests
         host.Sync([P("clock")]);
         host.Sync([P("claude"), P("clock")]);
         Assert.Equal(3, _created.Count);
+    }
+
+    [Fact]
+    public void A_widget_whose_factory_throws_is_reported_and_the_others_still_start()
+    {
+        var host = NewHost(throwsOnCreate: p => p.Kind == "claude");
+
+        host.Sync([P("claude"), P("clock")]);
+
+        Assert.Equal(new[] { ("claude", (string?)null) }, _failures);
+        Assert.False(host.Route("claude", null, "press"));
+        Assert.True(host.Route("clock", null, "tick"));
+
+        // "claude" threw inside create(), so a FakeWidget for it was never constructed.
+        Assert.Single(_created);
+    }
+
+    [Fact]
+    public void A_widget_whose_first_push_throws_is_reported_and_not_routed()
+    {
+        var host = NewHost(failsOnPush: p => p.Kind == "claude");
+
+        host.Sync([P("claude"), P("clock")]);
+
+        Assert.Equal(new[] { ("claude", (string?)null) }, _failures);
+        Assert.False(host.Route("claude", null, "press"));
+        Assert.True(host.Route("clock", null, "tick"));
+
+        var claudeWidget = _created.Single(w => w.Kind == "claude");
+        Assert.Equal(1, claudeWidget.Starts);
+        Assert.Equal(1, claudeWidget.Stops);
     }
 
     [Fact]

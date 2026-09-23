@@ -33,11 +33,17 @@ internal sealed class NoiseWidget(WidgetContext context) : WidgetBase(context, "
         _room.LevelChanged += level => dispatcher.BeginInvoke(() => PushLevel(level));
         _room.Failed += message => dispatcher.BeginInvoke(() =>
         {
+            if (_room is null) return;
+
             _error = message;
             Push();
         });
         _room.Breached += () => dispatcher.BeginInvoke(() =>
-            Context.Notifier.Show("Keep it down 🤫", "The room is over your limit."));
+        {
+            if (_room is null) return;
+
+            Context.Notifier.Show("Keep it down 🤫", "The room is over your limit.");
+        });
 
         RestartCapture();
 

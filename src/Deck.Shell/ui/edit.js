@@ -78,6 +78,7 @@ const Edit = (() => {
   }
 
   function startDrag(e, tile, p, handle) {
+    if (e.button !== 0) return;
     e.preventDefault();
     const origin = cellAt(e.clientX, e.clientY);
     const grab = { col: origin.col - p.col, row: origin.row - p.row };

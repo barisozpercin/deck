@@ -34,25 +34,27 @@ internal sealed class WidgetHost(Func<WidgetPlacement, IWidget?> create, Action<
         foreach (var (key, placement) in wanted)
         {
             if (_running.ContainsKey(key) || _failed.Contains(key)) continue;
-            if (create(placement) is not { } widget) continue;
 
-            widget.Variant = placement.Variant;
-
+            IWidget? widget = null;
             try
             {
+                widget = create(placement);
+                if (widget is null) continue;
+
+                widget.Variant = placement.Variant;
                 widget.Start();
+                widget.Push();
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"Widget {placement.Kind} failed to start: {ex}");
-                StopQuietly(widget);
+                if (widget is not null) StopQuietly(widget);
                 _failed.Add(key);
                 reportFailure(placement.Kind, placement.Ref);
                 continue;
             }
 
             _running[key] = widget;
-            widget.Push();
         }
     }
 

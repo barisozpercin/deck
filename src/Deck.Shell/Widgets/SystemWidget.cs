@@ -6,18 +6,23 @@ internal sealed class SystemWidget(WidgetContext context) : WidgetBase(context, 
 {
     private readonly SystemStats _system = new();
     private GpuStats? _gpu;
+    private bool _acquired;
 
     public override void Start()
     {
-        _gpu = new GpuStats();
         Context.Tick.Ticked += Sample;
         Context.Tick.Acquire();
+        _acquired = true;
+        _gpu = new GpuStats();
     }
 
     public override void Stop()
     {
+        if (!_acquired) return;
+
         Context.Tick.Ticked -= Sample;
         Context.Tick.Release();
+        _acquired = false;
         _gpu?.Dispose();
         _gpu = null;
     }
