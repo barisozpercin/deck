@@ -165,9 +165,11 @@ internal sealed class MixerWidget(WidgetContext context) : WidgetBase(context, "
                 Push();
             }
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or FormatException or InvalidOperationException)
         {
-            // Malformed message from the page; ignore.
+            // Malformed message from the page — bad JSON, a non-integer volume, a name that
+            // isn't a string. Ignore it: an exception escaping here would take the deck down.
+            // (The mixer calls themselves already swallow vanished-session errors.)
         }
     }
 
