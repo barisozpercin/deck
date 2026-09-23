@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Windows.Threading;
 using Deck.Shell.Weather;
 
@@ -44,7 +45,13 @@ internal sealed class WeatherWidget(WidgetContext context) : WidgetBase(context,
             // Stale is surfaced rather than hidden: a cached number shown as current is the
             // same lying-tile problem as a mute button that didn't mute.
             stale = _weather.IsStale,
-            error = _weather.Error
+            error = _weather.Error,
+            hourly = (reading?.Upcoming(DateTime.Now, 6) ?? []).Select(h => new
+            {
+                hour = h.Time.ToString("HH", CultureInfo.InvariantCulture),
+                icon = WeatherService.Describe(h.Code).Icon,
+                temp = $"{Math.Round(h.TempC)}°"
+            }).ToArray()
         });
     }
 

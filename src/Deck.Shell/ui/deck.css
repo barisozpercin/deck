@@ -529,3 +529,82 @@ body.editing #editbar { display: flex; }
 #library .card-detail { font-size: 11px; color: var(--dim); }
 #library .card.disabled { opacity: 0.4; cursor: default; }
 #library .card.disabled:hover { background: var(--tile); }
+
+/* --- weather 1x1 compact: readable from across the desk --- */
+.w-weather.v-compact { gap: 8px; }
+.w-weather.v-compact .wx-icon { font-size: 36px; }
+.w-weather.v-compact .wx-temp { font-size: 44px; }
+
+/* --- weather 2x1: today on the left, the next six hours on the right --- */
+.tile.w-weather.v-hourly { flex-direction: row; align-items: stretch; gap: 14px; }
+.w-weather.v-hourly .wx-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+.w-weather.v-hourly .wx-hours {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 6px;
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+}
+.wx-hour { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; }
+.wx-h { font-size: 10px; font-weight: 600; color: var(--dim); font-variant-numeric: tabular-nums; }
+.wx-hi { font-family: "Segoe UI Emoji", "Apple Color Emoji", system-ui; font-size: 18px; line-height: 1; }
+.wx-ht { font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.wx-none { grid-column: 1 / -1; grid-row: 1 / -1; align-self: center; text-align: center; font-size: 12px; color: var(--dim); }
+
+/* --- now playing 2x1: art, text and real buttons; the tile itself isn't a button --- */
+.tile.w-nowplaying.v-wide { flex-direction: row; justify-content: flex-start; gap: 14px; padding: 12px 14px; text-align: left; }
+.w-nowplaying.v-wide .np-art {
+  flex: none;
+  height: 100%;
+  max-height: 132px;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  background: #0e1116;
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.w-nowplaying.v-wide .np-art img { width: 100%; height: 100%; object-fit: cover; }
+.w-nowplaying.v-wide .np-art .np-record { width: 56%; height: 56%; }
+.w-nowplaying.v-wide .np-art.has-art .np-record { display: none; }
+.w-nowplaying.v-wide .np-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.w-nowplaying.v-wide .np-title { font-size: 14px; }
+.w-nowplaying.v-wide .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.np-controls { display: flex; gap: 8px; margin-top: 8px; }
+.np-btn {
+  width: 38px;
+  height: 30px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #0e1116;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font: inherit;
+}
+.np-btn:hover { background: var(--tile-hi); }
+.np-btn:active { transform: scale(0.95); }
+.tile .np-btn svg { width: 16px; height: 16px; }
+.w-nowplaying .i-pause { display: none; }
+.w-nowplaying.playing .i-pause { display: block; }
+.w-nowplaying.playing .i-play { display: none; }
+.w-nowplaying.playing .np-play { color: var(--ok); border-color: var(--ok-line); }
+
+/* --- mixer 2x1: three rows in one row's height --- */
+.w-mixer.v-short .mx-barwrap { padding: 5px 0; }

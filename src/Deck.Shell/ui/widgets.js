@@ -31,7 +31,11 @@ const ICONS = {
       <rect x="2" y="6" width="14" height="12" rx="2.5" />
       <path d="M16 10.5 22 7v10l-6-3.5z" />
       <line x1="3" y1="3" x2="21" y2="21" />
-    </svg>`
+    </svg>`,
+  play: `<svg class="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor" /></svg>`,
+  pause: `<svg class="i-pause" viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor" /></svg>`,
+  prev: `<svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9 12z" fill="currentColor" /></svg>`,
+  next: `<svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM4 5v14l11-7z" fill="currentColor" /></svg>`
 };
 
 function horizontalDrag(handle, measure, onValue, onEnd) {
@@ -159,6 +163,43 @@ function renderMixer(tile, rows, total, send) {
   }
 }
 
+function renderHours(host, hours) {
+  host.innerHTML = '';
+  if (!hours.length) {
+    host.innerHTML = '<div class="wx-none">no forecast</div>';
+    return;
+  }
+  for (const h of hours) {
+    const cell = document.createElement('div');
+    cell.className = 'wx-hour';
+    cell.innerHTML = '<span class="wx-h"></span><span class="wx-hi"></span><span class="wx-ht"></span>';
+    cell.children[0].textContent = h.hour;
+    cell.children[1].textContent = h.icon;
+    cell.children[2].textContent = h.temp;
+    host.append(cell);
+  }
+}
+
+const WEATHER_STANDARD = `
+  <div class="label">ANKARA</div>
+  <div class="wx-now"><span class="wx-icon">–</span><span class="wx-temp">–</span></div>
+  <div class="sub wx-label">loading…</div>
+  <div class="wx-stats">
+    <div><span class="wx-k">FEELS</span><span class="wx-v wx-feels">–</span></div>
+    <div><span class="wx-k">HIGH</span><span class="wx-v wx-high">–</span></div>
+    <div><span class="wx-k">LOW</span><span class="wx-v wx-low">–</span></div>
+  </div>`;
+
+const WEATHER_COMPACT = `
+  <div class="label">ANKARA</div>
+  <div class="wx-now"><span class="wx-icon">–</span><span class="wx-temp">–</span></div>
+  <div class="sub wx-label">loading…</div>`;
+
+const NP_TEXT = `
+  <div class="np-title">nothing</div>
+  <div class="sub np-artist"></div>
+  <div class="device np-app"></div>`;
+
 const Widgets = {
   claude: {
     click: 'press',
@@ -187,40 +228,59 @@ const Widgets = {
   },
 
   weather: {
-    template: () => `
-      <div class="label">ANKARA</div>
-      <div class="wx-now"><span class="wx-icon">–</span><span class="wx-temp">–</span></div>
-      <div class="sub wx-label">loading…</div>
-      <div class="wx-stats">
-        <div><span class="wx-k">FEELS</span><span class="wx-v wx-feels">–</span></div>
-        <div><span class="wx-k">HIGH</span><span class="wx-v wx-high">–</span></div>
-        <div><span class="wx-k">LOW</span><span class="wx-v wx-low">–</span></div>
-      </div>`,
-    update(tile, d) {
+    template: (variant) =>
+      variant === 'compact' ? WEATHER_COMPACT
+      : variant === 'hourly' ? `<div class="wx-main">${WEATHER_STANDARD}</div><div class="wx-hours"></div>`
+      : WEATHER_STANDARD,
+    update(tile, d, variant) {
       tile.classList.toggle('stale', d.stale);
       setText(tile, '.wx-icon', d.icon);
       setText(tile, '.wx-temp', d.temp);
       setText(tile, '.wx-label', d.error || d.label);
+      if (variant === 'compact') return;
       setText(tile, '.wx-feels', d.available ? d.feels : '–');
       setText(tile, '.wx-high', d.available ? d.high : '–');
       setText(tile, '.wx-low', d.available ? d.low : '–');
+      if (variant === 'hourly') renderHours(q(tile, '.wx-hours'), d.hourly || []);
     }
   },
 
   nowplaying: {
-    click: 'press',
-    context: 'next',
-    template: () => `
-      ${ICONS.record}
-      <div class="np-title">nothing</div>
-      <div class="sub np-artist"></div>
-      <div class="device np-app"></div>`,
-    update(tile, d) {
+    click: (variant) => (variant === 'wide' ? null : 'press'),
+    context: (variant) => (variant === 'wide' ? null : 'next'),
+    template: (variant) => variant === 'wide'
+      ? `<div class="np-art">${ICONS.record}<img alt="" hidden></div>
+         <div class="np-body">
+           ${NP_TEXT}
+           <div class="np-controls">
+             <button class="np-btn" data-msg="prev" title="Previous">${ICONS.prev}</button>
+             <button class="np-btn np-play" data-msg="press" title="Play / pause">${ICONS.play}${ICONS.pause}</button>
+             <button class="np-btn" data-msg="next" title="Next">${ICONS.next}</button>
+           </div>
+         </div>`
+      : `${ICONS.record}${NP_TEXT}`,
+    bind(tile, send, variant) {
+      if (variant !== 'wide') return;
+      for (const button of tile.querySelectorAll('.np-btn')) {
+        button.addEventListener('click', (e) => {
+          e.stopPropagation();
+          send(button.dataset.msg);
+        });
+      }
+    },
+    update(tile, d, variant) {
       tile.classList.toggle('playing', d.playing);
       tile.classList.toggle('idle', !d.hasSession);
       setText(tile, '.np-title', d.hasSession ? (d.title || 'untitled') : 'nothing playing');
       setText(tile, '.np-artist', !d.hasSession ? '' : d.playing ? (d.artist || 'playing') : 'paused');
       setText(tile, '.np-app', d.app);
+      if (variant === 'wide' && 'art' in d) {
+        const img = q(tile, '.np-art img');
+        img.hidden = !d.art;
+        if (d.art) img.src = d.art;
+        else img.removeAttribute('src');
+        q(tile, '.np-art').classList.toggle('has-art', !!d.art);
+      }
     }
   },
 

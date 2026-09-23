@@ -1,7 +1,10 @@
+using System.Globalization;
 using System.Net.Http;
 using System.Text.Json;
 
 namespace Deck.Shell.Weather;
+
+internal sealed record HourlyForecast(DateTime Time, double TempC, int Code);
 
 internal sealed record WeatherReading(
     double TempC,
@@ -9,7 +12,16 @@ internal sealed record WeatherReading(
     double HighC,
     double LowC,
     int Code,
-    DateTime FetchedAt);
+    DateTime FetchedAt,
+    IReadOnlyList<HourlyForecast> Hours)
+{
+    /// <summary>
+    /// The next few hours after <paramref name="now"/>. Worked out at display time rather than
+    /// fetch time, so the list moves on between the 15-minute fetches.
+    /// </summary>
+    public IReadOnlyList<HourlyForecast> Upcoming(DateTime now, int count) =>
+        Hours.Where(h => h.Time > now).Take(count).ToList();
+}
 
 /// <summary>
 /// Ankara weather from Open-Meteo.
@@ -30,7 +42,8 @@ internal sealed class WeatherService : IDisposable
         $"&longitude={Longitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}" +
         "&current=temperature_2m,apparent_temperature,weather_code" +
         "&daily=temperature_2m_max,temperature_2m_min" +
-        "&timezone=Europe%2FIstanbul&forecast_days=1";
+        "&hourly=temperature_2m,weather_code" +
+        "&timezone=Europe%2FIstanbul&forecast_days=2";
 
     /// <summary>Past this, the reading is shown as stale rather than presented as current.</summary>
     private static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(90);
@@ -48,18 +61,7 @@ internal sealed class WeatherService : IDisposable
         {
             string json = await _http.GetStringAsync(Url);
 
-            using var document = JsonDocument.Parse(json);
-            var current = document.RootElement.GetProperty("current");
-            var daily = document.RootElement.GetProperty("daily");
-
-            Latest = new WeatherReading(
-                current.GetProperty("temperature_2m").GetDouble(),
-                current.GetProperty("apparent_temperature").GetDouble(),
-                daily.GetProperty("temperature_2m_max")[0].GetDouble(),
-                daily.GetProperty("temperature_2m_min")[0].GetDouble(),
-                current.GetProperty("weather_code").GetInt32(),
-                DateTime.Now);
-
+            Latest = Parse(json, DateTime.Now);
             Error = null;
         }
         catch (Exception ex)
@@ -68,6 +70,44 @@ internal sealed class WeatherService : IDisposable
             // it stale, so a cached number is never passed off as current.
             Error = ex is HttpRequestException or TaskCanceledException ? "offline" : ex.Message;
         }
+    }
+
+    /// <summary>
+    /// Reads an Open-Meteo response. Separate from the fetch so it can be tested without the
+    /// network. Hours with a missing value are skipped rather than shown as zero.
+    /// </summary>
+    public static WeatherReading Parse(string json, DateTime fetchedAt)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        var current = root.GetProperty("current");
+        var daily = root.GetProperty("daily");
+
+        var hours = new List<HourlyForecast>();
+        if (root.TryGetProperty("hourly", out var hourly))
+        {
+            var times = hourly.GetProperty("time");
+            var temps = hourly.GetProperty("temperature_2m");
+            var codes = hourly.GetProperty("weather_code");
+            int count = Math.Min(times.GetArrayLength(), Math.Min(temps.GetArrayLength(), codes.GetArrayLength()));
+
+            for (int i = 0; i < count; i++)
+            {
+                if (temps[i].ValueKind != JsonValueKind.Number || codes[i].ValueKind != JsonValueKind.Number) continue;
+                if (!DateTime.TryParse(times[i].GetString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var time)) continue;
+
+                hours.Add(new HourlyForecast(time, temps[i].GetDouble(), codes[i].GetInt32()));
+            }
+        }
+
+        return new WeatherReading(
+            current.GetProperty("temperature_2m").GetDouble(),
+            current.GetProperty("apparent_temperature").GetDouble(),
+            daily.GetProperty("temperature_2m_max")[0].GetDouble(),
+            daily.GetProperty("temperature_2m_min")[0].GetDouble(),
+            current.GetProperty("weather_code").GetInt32(),
+            fetchedAt,
+            hours);
     }
 
     /// <summary>WMO weather codes, as used by Open-Meteo.</summary>
