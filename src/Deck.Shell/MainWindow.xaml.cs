@@ -132,6 +132,7 @@ public partial class MainWindow : Window
             AutoStart.RefreshIfEnabled();
         }
 
+        _notifier.AddItem("Edit layout", EnterEditMode);
         _notifier.AddItem("Microphones…", OpenDevices);
         _notifier.AddItem("Shortcuts…", OpenHotkeys);
         _notifier.AddToggle("Start with Windows", AutoStart.IsEnabled, AutoStart.Set);
@@ -326,7 +327,71 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (op is { Op: "delete", Kind: { } kind }) DeleteItem(kind, op.Ref);
+        if (op?.Op is null) return;
+
+        var layout = new DeckLayout(_config.Layout);
+        bool changed = false;
+
+        switch (op.Op)
+        {
+            case "edit":
+                _editing = true;
+                break;
+
+            case "done":
+                _editing = false;
+                break;
+
+            case "place" when op.Kind is not null:
+                string variant = op.Variant ?? WidgetCatalog.Find(op.Kind)?.Default.Id ?? "";
+                changed = layout.Place(op.Kind, variant, op.Ref, op.Col, op.Row);
+                break;
+
+            case "remove" when op.Kind is not null:
+                changed = layout.Remove(op.Kind, op.Ref);
+                break;
+
+            case "move" when op.Kind is not null:
+                changed = layout.Move(op.Kind, op.Ref, op.Col, op.Row);
+                break;
+
+            case "new-preset":
+                OpenCapture(op.Col, op.Row);
+                return;
+
+            case "delete" when op.Kind is not null:
+                DeleteItem(op.Kind, op.Ref);
+                return;
+        }
+
+        // Pushed even when nothing changed, so a refused drag snaps back to where it was.
+        if (changed) CommitLayout(layout);
+        else PushLayout();
+    }
+
+    private void EnterEditMode()
+    {
+        _editing = true;
+        PushLayout();
+    }
+
+    /// <summary>
+    /// Capture runs in its own ordinary window: the deck can never take keyboard focus, and
+    /// naming a preset and typing URLs both need a keyboard. The new preset lands in the cell
+    /// the library was opened from; if that cell has filled up meanwhile, it waits in the library.
+    /// </summary>
+    private void OpenCapture(int col, int row)
+    {
+        var capture = new CaptureWindow();
+        capture.Saved += preset =>
+        {
+            _config.Presets.Add(preset);
+            var layout = new DeckLayout(_config.Layout);
+            layout.Place("preset", WidgetCatalog.Standard, preset.Id, col, row);
+            CommitLayout(layout);
+        };
+        capture.Show();
+        capture.Activate();
     }
 
     /// <summary>

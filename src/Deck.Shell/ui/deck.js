@@ -70,14 +70,19 @@ function render() {
     grid.append(tile);
     const cached = cache.get(tile.dataset.key);
     if (cached) applyData(tile, p, cached);
+    Edit.decorateTile(tile, p);
   }
 
   for (let r = 0; r < layout.rows; r++) {
     for (let c = 0; c < layout.columns; c++) {
       if (taken.has(c + ',' + r)) continue;
-      grid.append(buildEmpty(c, r));
+      const cell = buildEmpty(c, r);
+      Edit.decorateEmpty(cell, c, r);
+      grid.append(cell);
     }
   }
+
+  Edit.afterRender();
 }
 
 function onLayout(message) {
@@ -96,7 +101,9 @@ function onWidget(message) {
   const p = layout.placements.find((x) => keyOf(x.kind, x.ref) === key);
   if (!p) return;
   const tile = grid.querySelector(`[data-key="${CSS.escape(key)}"]`);
-  if (tile) applyData(tile, p, message.data);
+  if (!tile) return;
+  applyData(tile, p, message.data);
+  if (message.data.failed) Edit.decorateTile(tile, p);
 }
 
 bridge.addEventListener('message', (ev) => {
