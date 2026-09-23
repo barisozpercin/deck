@@ -458,6 +458,10 @@ public partial class MainWindow : Window
     /// </summary>
     private void RunAction(string action) => _host?.Hotkey(action);
 
+    /// <summary>Whether a hotkey's widget is on the deck; hotkeys for widgets in the library do nothing.</summary>
+    private bool IsOnDeck(string action) =>
+        WidgetCatalog.OwnerOf(action) is { } owner && new DeckLayout(_config.Layout).IsPlaced(owner.Kind, owner.Ref);
+
     private void ApplyDeviceConfig()
     {
         _mic?.Select(_config.MuteDeviceIds);
@@ -492,7 +496,7 @@ public partial class MainWindow : Window
         // re-binding Ctrl+Alt+M would be impossible while Ctrl+Alt+M is still live.
         _hotkeys?.UnregisterAll();
 
-        _hotkeyWindow = new HotkeyWindow(_config);
+        _hotkeyWindow = new HotkeyWindow(_config, IsOnDeck);
 
         _hotkeyWindow.Changed += () =>
         {

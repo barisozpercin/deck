@@ -13,7 +13,7 @@ It starts with Windows and lives in the tray. Nothing else is needed day to day.
 
 - **Installed to** `%LOCALAPPDATA%\Deck\app`
 - **Settings** in `%APPDATA%\Deck\config.json`
-- **Tray icon** → Microphones…, Shortcuts…, Start with Windows, Exit
+- **Tray icon** → Edit layout, Microphones…, Shortcuts…, Start with Windows, Exit
 - **Start Menu** → Deck (if you exited and want it back)
 
 Exit from the tray rather than Task Manager: the deck reserves screen space the way the taskbar
@@ -25,20 +25,39 @@ restarting Explorer clears it.
 | Tile | Click | Right-click |
 |---|---|---|
 | Preset (e.g. WORK) | restore that window layout | delete it |
-| `+` | capture the current layout as a preset | — |
+| Shortcut | open it | delete it |
 | CLAUDE | jump to a session that wants you | mute/unmute its notifications |
-| ANKARA | — | — |
-| PLAYING | play/pause | next track |
-| MUTE | mute/unmute your microphone | — |
+| WEATHER | — | — |
+| NOW PLAYING | play/pause | next track |
+| NOW PLAYING 2×1 | its buttons: previous, play/pause, next | — |
+| MIC | mute/unmute your microphone | — |
 | CAMERA | — | — |
 | NOISE | arm/disarm the alert | recalibrate the limit |
 | POMODORO | start/stop a block | reset the counter |
 | STOPWATCH | start/stop | reset |
 | MIXER row | mute that app (icon or name) | forget the app |
 | MIXER bar | drag to set volume | — |
+| MIXER tile | — | open the full mixer |
+| Empty cell | edit the layout | — |
 
 Any tile action can also be bound to a global keyboard shortcut — tray → **Shortcuts…**. The
 screen is for state; the keyboard is for speed.
+
+## Editing the layout
+
+Click an empty cell, or tray → **Edit layout**. In edit mode:
+
+- **×** sends a tile to the library. Nothing is deleted, and its settings are kept.
+- **Drag** a tile to move it. Drop it on a tile of the same size and the two swap.
+- **+** on an empty cell opens the library: every widget not on the deck, in each size it comes
+  in (Weather 1×1, compact or 2×1 with the next hours; Now Playing 1×1 or 2×1 with art and
+  buttons; Mixer 2×2 or 2×1), your presets and shortcuts not on the deck, and **New preset**.
+  A size that doesn't fit at that cell is greyed out.
+- **Done**, bottom right, leaves edit mode.
+
+A widget in the library is fully off: no polling, no listening, no notifications, and its
+keyboard shortcut does nothing (the Shortcuts window marks it "not on deck"). Removing the mic
+tile leaves the microphone as it was.
 
 ## Rebuilding
 
@@ -53,6 +72,15 @@ Publish over the installed copy:
 ```bash
 dotnet publish src/Deck.Shell/Deck.Shell.csproj -c Release -r win-x64 --self-contained true -o "$env:LOCALAPPDATA\Deck\app"
 ```
+
+Tests (the layout rules, the migration from older configs, the widget host):
+
+```bash
+dotnet test tests/Deck.Shell.Tests/Deck.Shell.Tests.csproj
+```
+
+To work on the page without replacing the running deck, open `src/Deck.Shell/ui/dev/harness.html`
+in a browser. It fakes the host with sample data.
 
 Stop the running deck first — the executable will be locked otherwise. Autostart re-points
 itself to wherever the executable actually is each time it starts, so moving the install

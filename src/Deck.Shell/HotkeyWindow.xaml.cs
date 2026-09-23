@@ -13,16 +13,22 @@ namespace Deck.Shell;
 public partial class HotkeyWindow : Window
 {
     private readonly DeckConfig _config;
+    private readonly Func<string, bool> _isOnDeck;
     private string? _recording;
     private IReadOnlyList<string> _conflicts = [];
 
     /// <summary>Raised whenever a binding changes, so the host can re-register immediately.</summary>
     internal event Action? Changed;
 
-    internal HotkeyWindow(DeckConfig config)
+    /// <param name="isOnDeck">
+    /// Whether an action's widget is on the deck. Bindings for widgets in the library are kept
+    /// but marked, since pressing them does nothing until the widget is back.
+    /// </param>
+    internal HotkeyWindow(DeckConfig config, Func<string, bool> isOnDeck)
     {
         InitializeComponent();
         _config = config;
+        _isOnDeck = isOnDeck;
         Loaded += OnLoaded;
     }
 
@@ -52,8 +58,11 @@ public partial class HotkeyWindow : Window
         }
     }
 
-    /// <summary>Every action the deck can expose to a shortcut.</summary>
-    private IEnumerable<(string Action, string Label)> Actions()
+    /// <summary>Every action the deck can expose to a shortcut, marked when its widget is off the deck.</summary>
+    private IEnumerable<(string Action, string Label)> Actions() =>
+        AllActions().Select(a => (a.Action, _isOnDeck(a.Action) ? a.Label : a.Label + "  (not on deck)"));
+
+    private IEnumerable<(string Action, string Label)> AllActions()
     {
         yield return ("mute", "Mute / unmute microphone");
         yield return ("room", "Arm / disarm noise alerts");
