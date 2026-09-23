@@ -52,4 +52,9 @@
     <Content Include="ui\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The layout rules and migration are internal; the tests need to reach them. -->
+    <InternalsVisibleTo Include="Deck.Shell.Tests" />
+  </ItemGroup>
+
 </Project>
