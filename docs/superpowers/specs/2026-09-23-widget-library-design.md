@@ -77,8 +77,9 @@ Entered from **Tray → Edit layout**, or by clicking an empty cell.
   clicked cell becomes the top-left anchor for whatever is picked.
 - The tiles' own click, right-click and drag actions are turned off, so nothing can be muted,
   started or changed by accident while editing.
-- A **Done** button, pinned to the deck's corner, leaves edit mode. Leaving edit mode is the
-  only way out: the deck never takes keyboard focus, so Esc can't reach it.
+- A slim bar along the bottom of the deck shows a one-line hint and a **Done** button (bottom
+  right) that leaves edit mode. Done is the only way out: the deck never takes keyboard focus,
+  so Esc can't reach it.
 
 ### Library panel
 
@@ -190,12 +191,16 @@ same one-time migration.
 - `deck.html` no longer hard-codes tile positions. The host sends a `layout` message
   (placements + library contents + edit-mode flag), and the page builds the grid from it.
 - Each variant has its own template and render function keyed by `kind/variant`.
-- Messages are namespaced per widget (`w:<kind>[:<ref>]:<message>`) so they can reach the host
-  without the big switch.
+- Widget messages are addressed to one widget (`widget:{"kind","ref","msg"}`), so they reach
+  the host without the big switch. Host → page data is `{type:"widget", kind, ref, data}`.
 - Edit mode (badges, drag, + cells, library panel, Done) lives entirely in the page. It posts
-  `layout-place`, `layout-remove`, `layout-move`, `edit-exit` and `library-new-preset`, the
-  host applies them to `DeckLayout`, saves, and sends the new `layout` back. The host is the
-  single source of truth.
+  `layout:{"op": …}` with op `edit`, `done`, `place`, `remove`, `move`, `new-preset` or
+  `delete`. The host applies it to `DeckLayout`, saves, and sends the new `layout` back. The
+  host is the single source of truth.
+- The page is served from the `ui` folder through a WebView2 virtual host, so it can be split
+  into `deck.html`, `deck.css`, `widgets.js`, `deck.js` and `edit.js`. A dev-only
+  `ui/dev/harness.html` fakes the host so the page can be checked in a browser without
+  replacing the running deck.
 - Drag uses pointer events with capture, the same technique as the mixer sliders, so it needs
   no focus.
 
