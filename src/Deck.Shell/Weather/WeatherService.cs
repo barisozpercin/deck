@@ -16,9 +16,9 @@ internal sealed record WeatherReading(
     IReadOnlyList<HourlyForecast> Hours)
 {
     /// <summary>
-    /// The next few hours after <paramref name="now"/>. The widget only pushes this on fetch, so
-    /// the filtering here only ever runs right after a fetch — the hours are current as of that
-    /// fetch, at most 15 minutes old, not continuously advancing between fetches.
+    /// The next few hours after <paramref name="now"/>, worked out whenever the tile pushes —
+    /// mostly on the 15-minute fetch — so an hour that has just passed can linger for up to
+    /// 15 minutes. Close enough for a glance; not worth a timer of its own.
     /// </summary>
     public IReadOnlyList<HourlyForecast> Upcoming(DateTime now, int count) =>
         Hours.Where(h => h.Time > now).Take(count).ToList();
