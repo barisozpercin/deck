@@ -1,0 +1,965 @@
+<meta charset="utf-8" />
+<title>Deck</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --tile: #171b21;
+    --tile-hi: #1f252d;
+    --line: #2a313b;
+    --text: #e6eaf0;
+    --dim: #8b95a4;
+    --ok: #3fb950;
+    --ok-bg: #12251a;
+    --ok-line: #2c5138;
+    --warn: #d29922;
+    --danger: #f85149;
+    --danger-bg: #3d1418;
+    --danger-line: #7d2a2f;
+    --preset: #1b2530;
+    --preset-line: #2f4256;
+    --preset-text: #7cc4ff;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.35 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    user-select: none;
+    -webkit-user-drag: none;
+    overflow: hidden;
+    cursor: default;
+  }
+
+  body {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .tile {
+    position: relative;
+    background: var(--tile);
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    text-align: center;
+    padding: 10px;
+    overflow: hidden;
+    transition: background 90ms ease, transform 90ms ease, border-color 120ms ease;
+  }
+
+  .tile.pressable:hover { background: var(--tile-hi); }
+  .tile.pressable:active { transform: scale(0.97); }
+
+  .tile .label { font-size: 15px; font-weight: 650; letter-spacing: 0.03em; }
+  .tile .sub { font-size: 12px; color: var(--dim); }
+
+  /* Which hardware a tile is bound to. Configuration rather than state, so it sits quietly
+     at the bottom of its own tile instead of in a shared status bar. */
+  .tile .device {
+    max-width: 100%;
+    font-size: 11px;
+    color: #6d7787;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tile.ghost { background: transparent; border-style: dashed; }
+  .tile.ghost .label { color: var(--dim); font-weight: 600; }
+  .tile.blank { background: transparent; border: 1px dashed #1a1f26; }
+
+  .tile svg { width: 30px; height: 30px; }
+
+  /* --- now playing --- */
+  #nowplaying .np-title {
+    font-size: 13px;
+    font-weight: 600;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #nowplaying.playing .np-title { color: var(--ok); }
+  #nowplaying.idle { color: var(--dim); }
+
+  /* The record turns only while something is actually playing — a spinning disc over a paused
+     track would be the tile lying about its state, same rule as everywhere else. */
+  #nowplaying .np-record {
+    width: 34px;
+    height: 34px;
+    color: var(--dim);
+    animation: spin 3.4s linear infinite;
+    animation-play-state: paused;
+  }
+  #nowplaying.playing .np-record { color: var(--ok); animation-play-state: running; }
+  #nowplaying.idle .np-record { opacity: 0.35; }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  /* Presets own the top-left four columns. */
+  .preset-slots {
+    grid-column: 1 / span 4;
+    grid-row: 1;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    min-height: 0;
+  }
+
+  /* Bottom-right 2x2: wide enough for names beside icons, tall enough for every app that's
+     making sound rather than an arbitrary top three. */
+  #mixer {
+    grid-column: 5 / span 2;
+    grid-row: 2 / span 2;
+    justify-content: flex-start;
+    padding: 12px 14px;
+  }
+
+  /* --- mixer: inline, no dialog. Three apps is the stated ceiling, so they all fit. --- */
+  #mixer { gap: 2px; padding: 8px 10px; justify-content: center; }
+  #mixer .mx-rows { width: 100%; display: flex; flex-direction: column; gap: 3px; }
+
+  .mx-row {
+    display: grid;
+    grid-template-columns: 22px 82px 1fr 26px;
+    gap: 8px;
+    align-items: center;
+    font-size: 11.5px;
+  }
+
+  /* The icon replaces a name column that could never fit one — and doubles as the mute
+     button, since there is no room for a separate control. */
+  .mx-icon {
+    width: 20px;
+    height: 20px;
+    display: block;
+    cursor: pointer;
+    image-rendering: -webkit-optimize-contrast;
+  }
+
+  .mx-name {
+    color: var(--text);
+    font-weight: 600;
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  /* Padding, not height: the visible bar stays slim while the grab area is finger-sized. */
+  .mx-barwrap { padding: 7px 0; cursor: ew-resize; touch-action: none; }
+  .mx-bar {
+    display: block;
+    height: 9px;
+    border-radius: 5px;
+    background: #0e1116;
+    border: 1px solid var(--line);
+    overflow: hidden;
+  }
+  .mx-fill { display: block; height: 100%; background: var(--preset-text); }
+
+  .mx-val { text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); }
+
+  .mx-row.quiet .mx-fill { opacity: 0.45; }
+  .mx-row.quiet .mx-name { color: var(--dim); }
+  .mx-row.quiet .mx-icon { opacity: 0.7; }
+
+  /* Remembered but not running: the level is still editable, it just isn't applied yet. */
+  .mx-row.offline .mx-name { color: #5b6474; font-style: italic; }
+  .mx-row.offline .mx-fill { opacity: 0.28; }
+  .mx-row.offline .mx-val { color: #5b6474; }
+  .mx-row.offline .mx-icon { opacity: 0.4; filter: grayscale(1); }
+
+  .mx-row.muted .mx-icon { opacity: 0.45; filter: grayscale(1); }
+  .mx-row.muted .mx-name { color: var(--danger); text-decoration: line-through; }
+  .mx-row.muted .mx-fill { background: var(--danger); opacity: 0.4; }
+
+  /* --- claude sessions --- */
+  #claude .cc-count { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  #claude.idle { color: var(--dim); }
+  #claude.idle .cc-count { color: var(--dim); }
+
+  /* Working is informational; waiting needs you, so it gets the louder colour. */
+  #claude.working { background: var(--preset); border-color: var(--preset-line); }
+  #claude.working .label, #claude.working .cc-count { color: var(--preset-text); }
+
+  /* Only rendered when alerts are off — silence is the exception worth stating. */
+  #claude .cc-muted { color: var(--warn); font-weight: 600; }
+
+  #claude.waiting { background: #33270e; border-color: #6b5312; }
+  #claude.waiting .label, #claude.waiting .cc-count, #claude.waiting .sub { color: var(--warn); }
+
+  /* --- weather --- */
+
+  /* Icon and temperature share a line rather than stacking. That buys back a whole row, which
+     is what was making this tile feel squeezed. */
+  #weather { gap: 7px; padding: 12px 14px; }
+  #weather .wx-now { display: flex; align-items: center; justify-content: center; gap: 10px; }
+  #weather .wx-icon {
+    font-family: "Segoe UI Emoji", "Apple Color Emoji", system-ui;
+    font-size: 26px;
+    line-height: 1;
+  }
+  #weather .wx-temp {
+    font-size: 30px;
+    font-weight: 650;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  #weather.stale { opacity: 0.5; }
+
+  /* Three labelled figures rather than one cramped line of "feels 25° · H32° L19°". */
+  .wx-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    width: 100%;
+    margin-top: 3px;
+    padding-top: 9px;
+    border-top: 1px solid var(--line);
+  }
+  .wx-stats > div { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .wx-k { font-size: 8.5px; letter-spacing: 0.09em; font-weight: 700; color: var(--dim); }
+  .wx-v { font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; }
+
+  /* --- presets --- */
+  .tile.preset { background: var(--preset); border-color: var(--preset-line); }
+  .tile.preset:hover { background: #223041; }
+  .tile.preset .label { color: var(--preset-text); }
+  .tile.preset.busy { border-color: var(--warn); }
+  .tile.preset.busy .sub { color: var(--warn); }
+
+  /* Shortcuts sit beside presets but read as a quieter kind of button — they only launch
+     something, they don't rearrange your desk. */
+  .tile.shortcut { background: #1a1f27; border-color: #333c48; }
+  .tile.shortcut:hover { background: #222834; }
+  .tile.shortcut .label { color: #b9c4d2; }
+
+  /* Mic and camera are the same question — "is something capturing me?" — so they stack in
+     one column instead of being scattered by auto-flow. */
+  #mute { grid-column: 4; grid-row: 2; }
+  #camera { grid-column: 4; grid-row: 3; }
+
+  /* --- world clock --- */
+  #worldclock { grid-column: 3; grid-row: 3; padding: 10px 12px; }
+  #worldclock .wc-rows { width: 100%; display: flex; flex-direction: column; gap: 5px; }
+
+  /* Three columns, not two: the day marker gets its own cell so every time starts at the
+     same x and the column reads as a column. */
+  .wc-row {
+    display: grid;
+    grid-template-columns: 1fr 14px auto;
+    gap: 6px;
+    align-items: baseline;
+  }
+  .wc-city {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--dim);
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .wc-time { font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .wc-day { font-size: 9.5px; color: var(--warn); text-align: right; }
+
+  .wc-row.local .wc-city { color: var(--text); }
+  .wc-row.local .wc-time { color: var(--preset-text); }
+
+  /* --- mute --- */
+  /* Both states carry a full tile colour, so the difference is readable from across the desk
+     rather than depending on the colour of one word. */
+  #mute .icon-muted { display: none; }
+  #mute { background: var(--ok-bg); border-color: var(--ok-line); }
+  #mute:hover { background: #17301f; }
+  #mute .label, #mute .icon-live { color: var(--ok); }
+
+  #mute.muted { background: var(--danger-bg); border-color: var(--danger-line); }
+  #mute.muted:hover { background: #4a181d; }
+  #mute.muted .label, #mute.muted .icon-muted { color: var(--danger); }
+  #mute.muted .icon-live { display: none; }
+  #mute.muted .icon-muted { display: block; }
+
+  /* --- room --- */
+  .meter-wrap { width: 100%; padding: 8px 0; cursor: ew-resize; touch-action: none; }
+  .meter { position: relative; width: 100%; height: 14px; }
+  .meter .track {
+    height: 100%;
+    border-radius: 7px;
+    background: #0e1116;
+    border: 1px solid var(--line);
+    overflow: hidden;
+  }
+  .meter .fill {
+    height: 100%;
+    width: 0%;
+    background: var(--ok);
+    transition: width 60ms linear, background 120ms ease;
+  }
+  .meter .tick {
+    position: absolute;
+    top: -4px;
+    bottom: -4px;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--text);
+    transform: translateX(-50%);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.65);
+    pointer-events: none;
+  }
+  .meter .tick::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: -6px;
+    transform: translateX(-50%);
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid var(--text);
+  }
+  #room.dragging .meter .tick { background: var(--warn); }
+  #room.dragging .meter .tick::after { border-top-color: var(--warn); }
+  #room.over .meter .fill { background: var(--danger); }
+
+  /* Over the limit with alerts armed: fast and unmissable, because this is the state that
+     needs you to act. Disarmed and over stays quiet — that difference is the point. */
+  #room.alerting { animation: noiseAlert 0.15s ease-in-out infinite; }
+  #room.alerting .label { color: var(--danger); }
+
+  @keyframes noiseAlert {
+    0%, 100% { background: var(--tile); border-color: var(--line); }
+    50% { background: var(--danger-bg); border-color: var(--danger); }
+  }
+  #room .reading { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  #room .reading .unit { font-size: 11px; color: var(--dim); font-weight: 400; }
+  #room.disarmed { opacity: 0.55; }
+  #room.disarmed .sub { color: var(--warn); }
+  #room.dead .reading { color: var(--danger); }
+
+  /* --- camera: indicator only, so deliberately not .pressable ---
+     Same colour language as the mic: red with a slash means nothing is capturing you, green
+     means something is. Matching them means one glance answers both questions. */
+  #camera { background: var(--danger-bg); border-color: var(--danger-line); color: var(--danger); }
+  #camera .icon-live { display: none; }
+  #camera .label, #camera .sub { color: var(--danger); }
+
+  #camera.live {
+    background: var(--ok-bg);
+    border-color: var(--ok-line);
+    color: var(--ok);
+    /* Slow and shallow: a reminder, not an alarm. */
+    animation: cameraBreathe 3.4s ease-in-out infinite;
+  }
+  #camera.live .icon-live { display: block; }
+  #camera.live .icon-off { display: none; }
+  #camera.live .label, #camera.live .sub { color: var(--ok); }
+
+  @keyframes cameraBreathe {
+    0%, 100% { box-shadow: inset 0 0 0 0 rgba(63, 185, 80, 0); }
+    50% { box-shadow: inset 0 0 22px 0 rgba(63, 185, 80, 0.22); }
+  }
+
+  /* --- system stats: read-only, so no .pressable --- */
+  /* Three bars and nothing else, so they get the room the detail lines used to take. */
+  #system { gap: 12px; padding: 12px 14px; justify-content: center; }
+  #system .stat {
+    display: grid;
+    grid-template-columns: 32px 1fr 36px;
+    gap: 8px;
+    align-items: center;
+    width: 100%;
+    font-size: 12.5px;
+  }
+  #system .k { color: var(--dim); font-weight: 600; letter-spacing: 0.04em; }
+  #system .v { text-align: right; font-variant-numeric: tabular-nums; }
+  #system .bar {
+    height: 10px;
+    border-radius: 4px;
+    background: #0e1116;
+    border: 1px solid var(--line);
+    overflow: hidden;
+  }
+  #system .fill {
+    display: block;
+    height: 100%;
+    width: 0%;
+    background: var(--ok);
+    transition: width 240ms linear, background 200ms ease;
+  }
+  #system .fill.mid { background: var(--warn); }
+  #system .fill.high { background: var(--danger); }
+
+  /* --- timers --- */
+  #pomodoro .time, #stopwatch .time {
+    font-size: 23px;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+  }
+  #pomodoro.work { border-color: var(--preset-line); }
+  #pomodoro.work .label, #pomodoro.work .time { color: var(--preset-text); }
+  #pomodoro.break { background: var(--ok-bg); border-color: var(--ok-line); }
+  #pomodoro.break .label, #pomodoro.break .time { color: var(--ok); }
+  #pomodoro.awaiting { border-color: var(--warn); }
+  #pomodoro.awaiting .sub { color: var(--warn); }
+  #stopwatch.running .time { color: var(--ok); }
+
+</style>
+
+<!-- One 6x3 grid. Presets run across the top-left, the mixer claims the bottom-right 2x2 so
+     it can list more than a handful of apps, and everything else auto-flows into what's left. -->
+<div class="preset-slots" id="presets"></div>
+
+<div class="tile" id="mixer">
+  <div class="mx-rows" id="mx-rows"></div>
+  <div class="device" id="mx-empty">no audio apps</div>
+</div>
+
+<div class="tile pressable" id="claude">
+    <div class="label">CLAUDE</div>
+    <div class="cc-count" id="cc-count">–</div>
+    <div class="sub" id="cc-state">no sessions</div>
+    <div class="device" id="cc-names"></div>
+    <div class="device cc-muted" id="cc-alerts"></div>
+  </div>
+
+  <div class="tile" id="weather">
+    <div class="label">ANKARA</div>
+    <div class="wx-now">
+      <span class="wx-icon" id="wx-icon">🌡️</span>
+      <span class="wx-temp" id="wx-temp">–</span>
+    </div>
+    <div class="sub" id="wx-label">loading…</div>
+    <div class="wx-stats">
+      <div><span class="wx-k">FEELS</span><span class="wx-v" id="wx-feels">–</span></div>
+      <div><span class="wx-k">HIGH</span><span class="wx-v" id="wx-high">–</span></div>
+      <div><span class="wx-k">LOW</span><span class="wx-v" id="wx-low">–</span></div>
+    </div>
+  </div>
+
+  <div class="tile pressable" id="nowplaying">
+    <svg class="np-record" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="11.2" fill="#0e1116" stroke="#333c48" stroke-width="0.8" />
+      <circle cx="12" cy="12" r="8.6" fill="none" stroke="#2a313b" stroke-width="0.6" />
+      <circle cx="12" cy="12" r="6.9" fill="none" stroke="#2a313b" stroke-width="0.6" />
+      <circle cx="12" cy="12" r="5.2" fill="none" stroke="#2a313b" stroke-width="0.6" />
+      <circle cx="12" cy="12" r="3.4" fill="currentColor" />
+      <circle cx="12" cy="12" r="0.9" fill="#0b0d10" />
+      <path d="M12 1.2a10.8 10.8 0 0 1 7.6 3.2" fill="none" stroke="#4a5666" stroke-width="0.9"
+            stroke-linecap="round" />
+    </svg>
+    <div class="np-title" id="np-title">nothing</div>
+    <div class="sub" id="np-artist"></div>
+    <div class="device" id="np-app"></div>
+  </div>
+
+  <div class="tile" id="camera">
+    <svg class="icon-live" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="6" width="14" height="12" rx="2.5" />
+      <path d="M16 10.5 22 7v10l-6-3.5z" />
+    </svg>
+    <svg class="icon-off" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="6" width="14" height="12" rx="2.5" />
+      <path d="M16 10.5 22 7v10l-6-3.5z" />
+      <line x1="3" y1="3" x2="21" y2="21" />
+    </svg>
+    <div class="label">CAMERA</div>
+    <div class="sub" id="camera-state">off</div>
+  </div>
+
+  <div class="tile" id="system">
+    <div class="stat">
+      <span class="k">CPU</span>
+      <span class="bar"><span class="fill" id="cpu-fill"></span></span>
+      <span class="v" id="cpu-val">–</span>
+    </div>
+    <div class="stat">
+      <span class="k">RAM</span>
+      <span class="bar"><span class="fill" id="ram-fill"></span></span>
+      <span class="v" id="ram-val">–</span>
+    </div>
+    <div class="stat">
+      <span class="k">GPU</span>
+      <span class="bar"><span class="fill" id="gpu-fill"></span></span>
+      <span class="v" id="gpu-val">–</span>
+    </div>
+  </div>
+
+  <div class="tile pressable" id="mute">
+    <svg class="icon-live" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <line x1="12" y1="18" x2="12" y2="22" />
+    </svg>
+    <svg class="icon-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <line x1="12" y1="18" x2="12" y2="22" />
+      <line x1="3" y1="3" x2="21" y2="21" />
+    </svg>
+    <div class="label" id="mute-label">MIC LIVE</div>
+    <div class="sub" id="mute-sub"></div>
+    <div class="device" id="mute-device">—</div>
+  </div>
+
+  <div class="tile pressable" id="room">
+    <div class="label">NOISE</div>
+    <div class="meter-wrap" id="room-meter">
+      <div class="meter">
+        <div class="track"><div class="fill" id="room-fill"></div></div>
+        <div class="tick" id="room-tick"></div>
+      </div>
+    </div>
+    <div class="reading"><span id="room-level">0</span><span class="unit">/100</span></div>
+    <div class="sub" id="room-state">starting…</div>
+    <div class="device" id="room-device">—</div>
+  </div>
+
+  <div class="tile" id="worldclock">
+    <div class="wc-rows" id="wc-rows"></div>
+  </div>
+
+  <div class="tile pressable" id="pomodoro">
+    <div class="label">POMODORO</div>
+    <div class="time" id="pomodoro-time">25:00</div>
+    <div class="sub" id="pomodoro-state">ready</div>
+  </div>
+
+  <div class="tile pressable" id="stopwatch">
+    <div class="label">STOPWATCH</div>
+    <div class="time" id="stopwatch-time">00:00</div>
+    <div class="sub" id="stopwatch-state">click to start</div>
+  </div>
+
+<script>
+  const post = (m) => window.chrome.webview.postMessage(m);
+  const $ = (id) => document.getElementById(id);
+
+  let state = {
+    roomArmed: true, roomRunning: false, roomThreshold: 60, roomError: null,
+    presets: [], shortcuts: []
+  };
+
+  for (const id of ['mute', 'room', 'pomodoro', 'stopwatch', 'claude', 'nowplaying']) {
+    $(id).addEventListener('click', () => post('press:' + id));
+  }
+
+  // Right-click is the "undo / recalibrate" gesture across the deck, so a plain click can
+  // stay reserved for the thing you actually press all day.
+  const rightClick = {
+    room: 'press:room-calibrate',
+    pomodoro: 'pomodoro-reset',
+    stopwatch: 'stopwatch-reset',
+    nowplaying: 'nowplaying-next',
+    claude: 'claude-notify-toggle',
+    // Only needed when more than three apps are making sound.
+    mixer: 'press:mixer'
+  };
+
+  for (const [id, message] of Object.entries(rightClick)) {
+    $(id).addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      post(message);
+    });
+  }
+
+  // ---- preset row ----------------------------------------------------------
+  const SLOTS = 4;
+
+  function renderPresets() {
+    const row = $('presets');
+    row.innerHTML = '';
+
+    state.presets.forEach((p, i) => {
+      const tile = document.createElement('div');
+      tile.className = 'tile pressable preset';
+      tile.id = 'preset-' + i;
+      tile.innerHTML =
+        `<div class="label"></div><div class="sub">${p.count} window${p.count === 1 ? '' : 's'}</div>`;
+      tile.querySelector('.label').textContent = p.name;
+      tile.addEventListener('click', () => post('press:preset:' + i));
+      tile.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        post('preset-delete:' + i);
+      });
+      row.append(tile);
+    });
+
+    // Shortcuts share this row with presets — same shape of thing, and it keeps the top row
+    // as "buttons you configured" rather than splitting them across the deck.
+    (state.shortcuts || []).forEach((s, i) => {
+      const tile = document.createElement('div');
+      tile.className = 'tile pressable shortcut';
+      tile.innerHTML = '<div class="label"></div><div class="sub"></div>';
+      tile.querySelector('.label').textContent = s.label;
+      tile.querySelector('.sub').textContent = s.note;
+      tile.addEventListener('click', () => post('press:shortcut:' + i));
+      tile.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        post('shortcut-delete:' + i);
+      });
+      row.append(tile);
+    });
+
+    const used = state.presets.length + (state.shortcuts || []).length;
+
+    if (used < SLOTS) {
+      const add = document.createElement('div');
+      add.className = 'tile pressable ghost';
+      add.innerHTML = '<div class="label">+</div><div class="sub">save this layout</div>';
+      add.addEventListener('click', () => post('press:capture'));
+      row.append(add);
+    }
+
+    for (let i = used + 1; i < SLOTS; i++) {
+      const blank = document.createElement('div');
+      blank.className = 'tile blank';
+      row.append(blank);
+    }
+  }
+
+  // ---- draggable threshold -------------------------------------------------
+  const meterWrap = $('room-meter');
+  let dragging = false;
+
+  const valueAt = (clientX) => {
+    const r = meterWrap.querySelector('.meter').getBoundingClientRect();
+    return Math.max(0, Math.min(100, Math.round(((clientX - r.left) / r.width) * 100)));
+  };
+
+  const applyThreshold = (v) => {
+    state.roomThreshold = v;
+    renderRoom();
+    post('threshold-set:' + v);
+  };
+
+  meterWrap.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    dragging = true;
+    $('room').classList.add('dragging');
+    meterWrap.setPointerCapture(e.pointerId);
+    applyThreshold(valueAt(e.clientX));
+  });
+
+  meterWrap.addEventListener('pointermove', (e) => {
+    if (dragging) applyThreshold(valueAt(e.clientX));
+  });
+
+  const endDrag = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    $('room').classList.remove('dragging');
+    try { meterWrap.releasePointerCapture(e.pointerId); } catch (_) {}
+    post('threshold-commit');
+  };
+
+  meterWrap.addEventListener('pointerup', endDrag);
+  meterWrap.addEventListener('pointercancel', endDrag);
+  meterWrap.addEventListener('click', (e) => e.stopPropagation());
+
+  // ---- inline mixer --------------------------------------------------------
+  let mixerDragging = false;
+
+  function renderMixer(rows, total) {
+    const host = $('mx-rows');
+    host.innerHTML = '';
+
+    $('mx-empty').textContent =
+      rows.length === 0 ? 'no audio apps'
+      : total > rows.length ? (total - rows.length) + ' more · right-click'
+      : '';
+
+    for (const r of rows) {
+      const row = document.createElement('div');
+      row.className = 'mx-row'
+        + (r.muted ? ' muted' : '')
+        + (r.active ? '' : ' quiet')
+        + (r.running === false ? ' offline' : '');
+
+      // Icon and name are separate cells but one control: either mutes the app.
+      let icon;
+      if (r.icon) {
+        icon = document.createElement('img');
+        icon.className = 'mx-icon';
+        icon.src = r.icon;
+        icon.alt = '';
+        icon.draggable = false;
+      } else {
+        icon = document.createElement('span');
+        icon.className = 'mx-icon';
+      }
+
+      const name = document.createElement('span');
+      name.className = 'mx-name';
+      name.textContent = r.label || r.name;
+
+      const tip = (r.running === false
+        ? r.name + ' — not running; this level applies when it next opens'
+        : r.name + (r.muted ? ' — muted, click to unmute' : ' — click to mute'))
+        + '\nRight-click to remove it from the mixer';
+
+      icon.title = tip;
+      name.title = tip;
+
+      // Remembered apps are shown whether or not they're running, so an uninstalled one needs
+      // a way out. stopPropagation keeps this off the tile's own right-click.
+      row.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        post('mixer-forget:' + r.name);
+      });
+
+      if (r.running !== false) {
+        const toggleMute = () =>
+          post('mixer-set:' + JSON.stringify({ name: r.name, muted: !r.muted }));
+        icon.addEventListener('click', toggleMute);
+        name.addEventListener('click', toggleMute);
+      }
+
+      const wrap = document.createElement('span');
+      wrap.className = 'mx-barwrap';
+      const bar = document.createElement('span');
+      bar.className = 'mx-bar';
+      const fill = document.createElement('span');
+      fill.className = 'mx-fill';
+      fill.style.width = r.volume + '%';
+      bar.append(fill);
+      wrap.append(bar);
+
+      const value = document.createElement('span');
+      value.className = 'mx-val';
+      value.textContent = r.volume;
+
+      const valueAt = (clientX) => {
+        const box = bar.getBoundingClientRect();
+        return Math.max(0, Math.min(100, Math.round(((clientX - box.left) / box.width) * 100)));
+      };
+
+      const apply = (v) => {
+        fill.style.width = v + '%';
+        value.textContent = v;
+        post('mixer-set:' + JSON.stringify({ name: r.name, volume: v }));
+      };
+
+      wrap.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        mixerDragging = true;
+        wrap.setPointerCapture(e.pointerId);
+        apply(valueAt(e.clientX));
+      });
+
+      wrap.addEventListener('pointermove', (e) => {
+        if (mixerDragging) apply(valueAt(e.clientX));
+      });
+
+      const endDrag = (e) => {
+        if (!mixerDragging) return;
+        mixerDragging = false;
+        try { wrap.releasePointerCapture(e.pointerId); } catch (_) {}
+        post('mixer-commit');
+      };
+
+      wrap.addEventListener('pointerup', endDrag);
+      wrap.addEventListener('pointercancel', endDrag);
+
+      row.append(icon, name, wrap, value);
+      host.append(row);
+    }
+  }
+
+  // ---- rendering -----------------------------------------------------------
+  function setStat(name, value) {
+    const fill = $(name + '-fill');
+    fill.style.width = value + '%';
+    // Colour by load so the tile is readable at a glance without reading the number.
+    fill.classList.toggle('mid', value >= 60 && value < 85);
+    fill.classList.toggle('high', value >= 85);
+    $(name + '-val').textContent = value + '%';
+  }
+
+  function renderRoom() {
+    const room = $('room');
+    room.classList.toggle('disarmed', !state.roomArmed);
+    room.classList.toggle('dead', !state.roomRunning);
+    $('room-tick').style.left = state.roomThreshold + '%';
+    $('room-state').textContent = !state.roomRunning
+      ? (state.roomError || 'not listening')
+      : (state.roomArmed ? 'armed · limit ' + state.roomThreshold
+                         : 'ALERTS OFF · limit ' + state.roomThreshold);
+  }
+
+  window.chrome.webview.addEventListener('message', (ev) => {
+    const d = ev.data;
+
+    if (d.type === 'state') {
+      $('mute').classList.toggle('muted', d.muted);
+      $('mute-label').textContent = d.muted ? 'MUTED' : 'MIC LIVE';
+      $('mute-device').textContent =
+        d.muteDevices.length ? d.muteDevices.join(' · ') : 'no device selected';
+      $('room-device').textContent = d.roomDevice || 'no sensor selected';
+
+      // A host update mid-drag would yank the handle out from under the mouse.
+      const threshold = dragging ? state.roomThreshold : d.roomThreshold;
+      state = { ...d, roomThreshold: threshold };
+      renderRoom();
+      renderPresets();
+    }
+
+    if (d.type === 'level') {
+      $('room-fill').style.width = d.value + '%';
+      $('room-level').textContent = Math.round(d.value);
+      const over = d.value > state.roomThreshold;
+      const room = $('room');
+      room.classList.toggle('over', over);
+      room.classList.toggle('alerting', over && state.roomArmed);
+    }
+
+    if (d.type === 'preset') {
+      const tile = $('preset-' + d.index);
+      if (!tile) return;
+      tile.classList.toggle('busy', d.state === 'running');
+      tile.querySelector('.sub').textContent =
+        d.state === 'running' ? 'working…' : (d.summary || '');
+    }
+
+    if (d.type === 'clock') {
+      const host = $('wc-rows');
+      host.innerHTML = '';
+
+      for (const c of d.cities) {
+        const row = document.createElement('div');
+        row.className = 'wc-row' + (c.local ? ' local' : '');
+
+        const city = document.createElement('span');
+        city.className = 'wc-city';
+        city.textContent = c.label;
+
+        // Melbourne is routinely on tomorrow's date — worth saying so. Always rendered, even
+        // when empty, so the times stay aligned.
+        const day = document.createElement('span');
+        day.className = 'wc-day';
+        day.textContent = c.day === 0 ? '' : (c.day > 0 ? '+' + c.day : String(c.day));
+
+        const time = document.createElement('span');
+        time.className = 'wc-time';
+        time.textContent = c.time;
+
+        row.append(city, day, time);
+        host.append(row);
+      }
+    }
+
+    if (d.type === 'media') {
+      const np = $('nowplaying');
+      np.classList.toggle('playing', d.playing);
+      np.classList.toggle('idle', !d.hasSession);
+
+      $('np-title').textContent = d.hasSession ? (d.title || 'untitled') : 'nothing playing';
+      $('np-artist').textContent = !d.hasSession ? ''
+        : d.playing ? (d.artist || 'playing')
+        : 'paused';
+      $('np-app').textContent = d.app;
+
+      // Rebuilding mid-drag would tear the slider out from under the pointer.
+      if (!mixerDragging) renderMixer(d.mixerRows, d.mixerApps);
+    }
+
+    if (d.type === 'claude') {
+      const tile = $('claude');
+      const total = d.waiting + d.working;
+
+      tile.classList.toggle('waiting', d.waiting > 0);
+      tile.classList.toggle('working', d.waiting === 0 && d.working > 0);
+      tile.classList.toggle('idle', total === 0);
+
+      $('cc-count').textContent = total === 0 ? '–' : (d.waiting > 0 ? d.waiting : d.working);
+      $('cc-state').textContent =
+        total === 0 ? 'no sessions'
+        : d.waiting > 0 ? 'waiting on you' + (d.working ? ' · ' + d.working + ' working' : '')
+        : 'working';
+      $('cc-names').textContent = d.names;
+      $('cc-alerts').textContent = d.notify ? '' : 'alerts muted';
+      tile.title = 'Click to jump to a session · right-click to '
+        + (d.notify ? 'mute' : 'unmute') + ' notifications';
+    }
+
+    if (d.type === 'weather') {
+      $('weather').classList.toggle('stale', d.stale);
+      $('wx-icon').textContent = d.icon;
+      $('wx-temp').textContent = d.temp;
+      $('wx-label').textContent = d.error || d.label;
+      $('wx-feels').textContent = d.available ? d.feels : '–';
+      $('wx-high').textContent = d.available ? d.high : '–';
+      $('wx-low').textContent = d.available ? d.low : '–';
+    }
+
+    if (d.type === 'privacy') {
+      $('camera').classList.toggle('live', d.camera.inUse);
+      $('camera-state').textContent = d.camera.inUse ? (d.camera.apps || 'in use') : 'off';
+
+      // The mute tile can say whether the mic is switched on, but not whether anything is
+      // actually listening. This is the missing half.
+      $('mute-sub').textContent = d.microphone.inUse ? d.microphone.apps : '';
+    }
+
+    if (d.type === 'timers') {
+      const p = d.pomodoro;
+      const tile = $('pomodoro');
+      tile.classList.toggle('work', p.phase === 'work');
+      tile.classList.toggle('break', p.phase === 'break');
+      tile.classList.toggle('awaiting', p.awaiting);
+
+      const blocks = p.blocks ? ` · ${p.blocks} done` : '';
+      $('pomodoro-time').textContent = p.phase === 'idle' ? '25:00' : p.remaining;
+      $('pomodoro-state').textContent =
+        p.phase === 'work' ? 'work' + blocks
+        : p.phase === 'break' ? 'break — step away' + blocks
+        : p.awaiting ? 'break over · click to resume' + blocks
+        : 'ready' + blocks;
+
+      const w = d.stopwatch;
+      $('stopwatch').classList.toggle('running', w.running);
+      $('stopwatch-time').textContent = w.elapsed;
+      $('stopwatch-state').textContent =
+        w.running ? 'running' : (w.hasElapsed ? 'stopped · right-click to reset' : 'click to start');
+    }
+
+    if (d.type === 'system') {
+      setStat('cpu', d.cpu);
+      setStat('ram', d.ram);
+
+      if (d.gpuAvailable) {
+        setStat('gpu', d.gpu);
+      } else {
+        $('gpu-fill').style.width = '0%';
+        $('gpu-val').textContent = 'n/a';
+      }
+    }
+  });
+
+  renderRoom();
+  renderPresets();
+</script>
