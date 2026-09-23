@@ -61,8 +61,8 @@ public partial class HotkeyWindow : Window
         yield return ("stopwatch", "Start / stop stopwatch");
         yield return ("nowplaying", "Play / pause media");
 
-        for (int i = 0; i < _config.Presets.Count; i++)
-            yield return ($"preset:{i}", $"Run preset · {_config.Presets[i].Name}");
+        foreach (var preset in _config.Presets)
+            yield return ($"{Deck.Shell.Layout.WidgetCatalog.PresetActionPrefix}{preset.Id}", $"Run preset · {preset.Name}");
     }
 
     private void SendBindings()

@@ -49,7 +49,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="ui\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <!-- ui\dev is a browser harness for working on the page; the app never loads it. -->
+    <Content Include="ui\**\*" Exclude="ui\dev\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

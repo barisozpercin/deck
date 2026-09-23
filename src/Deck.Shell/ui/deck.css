@@ -1,0 +1,402 @@
+:root {
+  --bg: #0b0d10;
+  --tile: #171b21;
+  --tile-hi: #1f252d;
+  --line: #2a313b;
+  --text: #e6eaf0;
+  --dim: #8b95a4;
+  --ok: #3fb950;
+  --ok-bg: #12251a;
+  --ok-line: #2c5138;
+  --warn: #d29922;
+  --danger: #f85149;
+  --danger-bg: #3d1418;
+  --danger-line: #7d2a2f;
+  --preset: #1b2530;
+  --preset-line: #2f4256;
+  --preset-text: #7cc4ff;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.35 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  user-select: none;
+  -webkit-user-drag: none;
+  overflow: hidden;
+  cursor: default;
+}
+
+body { display: flex; flex-direction: column; }
+
+#stage { position: relative; flex: 1; min-height: 0; }
+
+/* One 6x3 grid. Where each tile sits comes from the saved layout, not from this file. */
+#grid {
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+
+.tile {
+  position: relative;
+  background: var(--tile);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  text-align: center;
+  padding: 10px;
+  overflow: hidden;
+  transition: background 90ms ease, transform 90ms ease, border-color 120ms ease;
+}
+
+.tile.pressable:hover { background: var(--tile-hi); }
+.tile.pressable:active { transform: scale(0.97); }
+
+.tile .label { font-size: 15px; font-weight: 650; letter-spacing: 0.03em; }
+.tile .sub { font-size: 12px; color: var(--dim); }
+
+/* Which hardware a tile is bound to. Configuration rather than state, so it sits quietly
+   at the bottom of its own tile instead of in a shared status bar. */
+.tile .device {
+  max-width: 100%;
+  font-size: 11px;
+  color: #6d7787;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tile.blank { background: transparent; border: 1px dashed #1a1f26; }
+
+.tile svg { width: 30px; height: 30px; }
+
+.tile.failed { border-color: var(--danger-line); }
+.tile.failed .label { color: var(--danger); }
+
+/* --- now playing --- */
+.w-nowplaying .np-title {
+  font-size: 13px;
+  font-weight: 600;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.w-nowplaying.playing .np-title { color: var(--ok); }
+.tile.w-nowplaying.idle { color: var(--dim); }
+
+/* The record turns only while something is actually playing — a spinning disc over a paused
+   track would be the tile lying about its state, same rule as everywhere else. */
+.w-nowplaying .np-record {
+  width: 34px;
+  height: 34px;
+  color: var(--dim);
+  animation: spin 3.4s linear infinite;
+  animation-play-state: paused;
+}
+.w-nowplaying.playing .np-record { color: var(--ok); animation-play-state: running; }
+.w-nowplaying.idle .np-record { opacity: 0.35; }
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* --- mixer --- */
+.tile.w-mixer { gap: 2px; padding: 8px 10px; justify-content: center; }
+.w-mixer .mx-rows { width: 100%; display: flex; flex-direction: column; gap: 3px; }
+
+.mx-row {
+  display: grid;
+  grid-template-columns: 22px 82px 1fr 26px;
+  gap: 8px;
+  align-items: center;
+  font-size: 11.5px;
+}
+
+/* The icon replaces a name column that could never fit one — and doubles as the mute
+   button, since there is no room for a separate control. */
+.mx-icon {
+  width: 20px;
+  height: 20px;
+  display: block;
+  cursor: pointer;
+  image-rendering: -webkit-optimize-contrast;
+}
+
+.mx-name {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  text-align: left;
+}
+
+/* Padding, not height: the visible bar stays slim while the grab area is finger-sized. */
+.mx-barwrap { padding: 7px 0; cursor: ew-resize; touch-action: none; }
+.mx-bar {
+  display: block;
+  height: 9px;
+  border-radius: 5px;
+  background: #0e1116;
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.mx-fill { display: block; height: 100%; background: var(--preset-text); }
+
+.mx-val { text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); }
+
+.mx-row.quiet .mx-fill { opacity: 0.45; }
+.mx-row.quiet .mx-name { color: var(--dim); }
+.mx-row.quiet .mx-icon { opacity: 0.7; }
+
+/* Remembered but not running: the level is still editable, it just isn't applied yet. */
+.mx-row.offline .mx-name { color: #5b6474; font-style: italic; }
+.mx-row.offline .mx-fill { opacity: 0.28; }
+.mx-row.offline .mx-val { color: #5b6474; }
+.mx-row.offline .mx-icon { opacity: 0.4; filter: grayscale(1); }
+
+.mx-row.muted .mx-icon { opacity: 0.45; filter: grayscale(1); }
+.mx-row.muted .mx-name { color: var(--danger); text-decoration: line-through; }
+.mx-row.muted .mx-fill { background: var(--danger); opacity: 0.4; }
+
+/* --- claude sessions --- */
+.w-claude .cc-count { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.tile.w-claude.idle { color: var(--dim); }
+.w-claude.idle .cc-count { color: var(--dim); }
+
+/* Working is informational; waiting needs you, so it gets the louder colour. */
+.tile.w-claude.working { background: var(--preset); border-color: var(--preset-line); }
+.w-claude.working .label, .w-claude.working .cc-count { color: var(--preset-text); }
+
+/* Only rendered when alerts are off — silence is the exception worth stating. */
+.w-claude .cc-muted { color: var(--warn); font-weight: 600; }
+
+.tile.w-claude.waiting { background: #33270e; border-color: #6b5312; }
+.w-claude.waiting .label, .w-claude.waiting .cc-count, .w-claude.waiting .sub { color: var(--warn); }
+
+/* --- weather --- */
+
+/* Icon and temperature share a line rather than stacking. That buys back a whole row, which
+   is what was making this tile feel squeezed. */
+.tile.w-weather { gap: 7px; padding: 12px 14px; }
+.w-weather .wx-now { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.w-weather .wx-icon {
+  font-family: "Segoe UI Emoji", "Apple Color Emoji", system-ui;
+  font-size: 26px;
+  line-height: 1;
+}
+.w-weather .wx-temp {
+  font-size: 30px;
+  font-weight: 650;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.w-weather.stale { opacity: 0.5; }
+
+/* Three labelled figures rather than one cramped line of "feels 25° · H32° L19°". */
+.wx-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  width: 100%;
+  margin-top: 3px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+.wx-stats > div { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.wx-k { font-size: 8.5px; letter-spacing: 0.09em; font-weight: 700; color: var(--dim); }
+.wx-v { font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; }
+
+/* --- presets --- */
+.tile.w-preset { background: var(--preset); border-color: var(--preset-line); }
+.tile.w-preset:hover { background: #223041; }
+.w-preset .label { color: var(--preset-text); }
+.tile.w-preset.busy { border-color: var(--warn); }
+.w-preset.busy .sub { color: var(--warn); }
+
+/* Shortcuts sit beside presets but read as a quieter kind of button — they only launch
+   something, they don't rearrange your desk. */
+.tile.w-shortcut { background: #1a1f27; border-color: #333c48; }
+.tile.w-shortcut:hover { background: #222834; }
+.w-shortcut .label { color: #b9c4d2; }
+
+/* --- world clock --- */
+.tile.w-clock { padding: 10px 12px; }
+.w-clock .wc-rows { width: 100%; display: flex; flex-direction: column; gap: 5px; }
+
+/* Three columns, not two: the day marker gets its own cell so every time starts at the
+   same x and the column reads as a column. */
+.wc-row {
+  display: grid;
+  grid-template-columns: 1fr 14px auto;
+  gap: 6px;
+  align-items: baseline;
+}
+.wc-city {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--dim);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wc-time { font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.wc-day { font-size: 9.5px; color: var(--warn); text-align: right; }
+
+.wc-row.local .wc-city { color: var(--text); }
+.wc-row.local .wc-time { color: var(--preset-text); }
+
+/* --- mic --- */
+/* Both states carry a full tile colour, so the difference is readable from across the desk
+   rather than depending on the colour of one word. */
+.w-mic .icon-muted { display: none; }
+.tile.w-mic { background: var(--ok-bg); border-color: var(--ok-line); }
+.tile.w-mic:hover { background: #17301f; }
+.w-mic .label, .w-mic .icon-live { color: var(--ok); }
+
+.tile.w-mic.muted { background: var(--danger-bg); border-color: var(--danger-line); }
+.tile.w-mic.muted:hover { background: #4a181d; }
+.w-mic.muted .label, .w-mic.muted .icon-muted { color: var(--danger); }
+.w-mic.muted .icon-live { display: none; }
+.w-mic.muted .icon-muted { display: block; }
+
+/* --- noise --- */
+.meter-wrap { width: 100%; padding: 8px 0; cursor: ew-resize; touch-action: none; }
+.meter { position: relative; width: 100%; height: 14px; }
+.meter .track {
+  height: 100%;
+  border-radius: 7px;
+  background: #0e1116;
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.meter .fill {
+  height: 100%;
+  width: 0%;
+  background: var(--ok);
+  transition: width 60ms linear, background 120ms ease;
+}
+.meter .tick {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--text);
+  transform: translateX(-50%);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.65);
+  pointer-events: none;
+}
+.meter .tick::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -6px;
+  transform: translateX(-50%);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid var(--text);
+}
+.w-noise.dragging .meter .tick { background: var(--warn); }
+.w-noise.dragging .meter .tick::after { border-top-color: var(--warn); }
+.w-noise.over .meter .fill { background: var(--danger); }
+
+/* Over the limit with alerts armed: fast and unmissable, because this is the state that
+   needs you to act. Disarmed and over stays quiet — that difference is the point. */
+.tile.w-noise.alerting { animation: noiseAlert 0.15s ease-in-out infinite; }
+.w-noise.alerting .label { color: var(--danger); }
+
+@keyframes noiseAlert {
+  0%, 100% { background: var(--tile); border-color: var(--line); }
+  50% { background: var(--danger-bg); border-color: var(--danger); }
+}
+.w-noise .reading { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.w-noise .reading .unit { font-size: 11px; color: var(--dim); font-weight: 400; }
+.tile.w-noise.disarmed { opacity: 0.55; }
+.w-noise.disarmed .sub { color: var(--warn); }
+.w-noise.dead .reading { color: var(--danger); }
+
+/* --- camera: indicator only, so deliberately not .pressable ---
+   Same colour language as the mic: red with a slash means nothing is capturing you, green
+   means something is. Matching them means one glance answers both questions. */
+.tile.w-camera { background: var(--danger-bg); border-color: var(--danger-line); color: var(--danger); }
+.w-camera .icon-live { display: none; }
+.w-camera .label, .w-camera .sub { color: var(--danger); }
+
+.tile.w-camera.live {
+  background: var(--ok-bg);
+  border-color: var(--ok-line);
+  color: var(--ok);
+  /* Slow and shallow: a reminder, not an alarm. */
+  animation: cameraBreathe 3.4s ease-in-out infinite;
+}
+.w-camera.live .icon-live { display: block; }
+.w-camera.live .icon-off { display: none; }
+.w-camera.live .label, .w-camera.live .sub { color: var(--ok); }
+
+@keyframes cameraBreathe {
+  0%, 100% { box-shadow: inset 0 0 0 0 rgba(63, 185, 80, 0); }
+  50% { box-shadow: inset 0 0 22px 0 rgba(63, 185, 80, 0.22); }
+}
+
+/* --- system stats: read-only, so no .pressable --- */
+/* Three bars and nothing else, so they get the room the detail lines used to take. */
+.tile.w-system { gap: 12px; padding: 12px 14px; justify-content: center; }
+.w-system .stat {
+  display: grid;
+  grid-template-columns: 32px 1fr 36px;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  font-size: 12.5px;
+}
+.w-system .k { color: var(--dim); font-weight: 600; letter-spacing: 0.04em; }
+.w-system .v { text-align: right; font-variant-numeric: tabular-nums; }
+.w-system .bar {
+  height: 10px;
+  border-radius: 4px;
+  background: #0e1116;
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.w-system .fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--ok);
+  transition: width 240ms linear, background 200ms ease;
+}
+.w-system .fill.mid { background: var(--warn); }
+.w-system .fill.high { background: var(--danger); }
+
+/* --- timers --- */
+.w-pomodoro .time, .w-stopwatch .time {
+  font-size: 23px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.tile.w-pomodoro.work { border-color: var(--preset-line); }
+.w-pomodoro.work .label, .w-pomodoro.work .time { color: var(--preset-text); }
+.tile.w-pomodoro.break { background: var(--ok-bg); border-color: var(--ok-line); }
+.w-pomodoro.break .label, .w-pomodoro.break .time { color: var(--ok); }
+.tile.w-pomodoro.awaiting { border-color: var(--warn); }
+.w-pomodoro.awaiting .sub { color: var(--warn); }
+.w-stopwatch.running .time { color: var(--ok); }

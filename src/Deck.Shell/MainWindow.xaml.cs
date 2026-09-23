@@ -1,26 +1,15 @@
-using System.Diagnostics;
-using System.Globalization;
 using System.IO;
-using System.Media;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Interop;
-using System.Windows.Threading;
-using Deck.Shell.Apps;
 using Deck.Shell.Audio;
-using Deck.Shell.ClaudeStatus;
-using Deck.Shell.Clock;
 using Deck.Shell.Config;
 using Deck.Shell.Hotkeys;
 using Deck.Shell.Interop;
-using Deck.Shell.Media;
+using Deck.Shell.Layout;
 using Deck.Shell.Notifications;
-using Deck.Shell.Presets;
-using Deck.Shell.Privacy;
 using Deck.Shell.Startup;
-using Deck.Shell.Stats;
-using Deck.Shell.Timers;
-using Deck.Shell.Weather;
+using Deck.Shell.Widgets;
 using Microsoft.Web.WebView2.Core;
 using static Deck.Shell.Interop.NativeMethods;
 
@@ -32,45 +21,28 @@ public partial class MainWindow : Window
     private const int DeckHeightPx = 520;
 
     /// <summary>
-    /// A disarmed noise monitor is supposed to be temporary, but this desktop can run for weeks
-    /// without a restart, so "re-arms when the deck starts" would rarely fire. This gives that
-    /// rule a heartbeat.
+    /// The page is served from the ui folder under this made-up host name rather than injected
+    /// as one string, so its stylesheet and scripts can live in their own files. ".example" is
+    /// reserved and never resolves, so nothing leaves the machine.
     /// </summary>
-    private const int DailyRearmHour = 21;
+    private const string UiHost = "deck.example";
 
-    /// <summary>How many apps the 2x2 mixer tile can show without crowding.</summary>
-    private const int MixerRowLimit = 6;
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     private AppBarHost? _appBar;
     private ForegroundTracker? _tracker;
     private MicController? _mic;
-    private RoomMonitor? _room;
     private Notifier? _notifier;
     private HotkeyManager? _hotkeys;
     private HotkeyWindow? _hotkeyWindow;
     private DeviceWindow? _deviceWindow;
-    private ClaudeWatcher? _claude;
-    private DispatcherTimer? _claudeTimer;
-    private readonly HashSet<string> _previouslyWaiting = new(StringComparer.Ordinal);
-    private int _claudeFocusIndex;
-    private bool _claudePolling;
-    private bool _claudeFirstPoll = true;
-    private NowPlaying? _nowPlaying;
-    private VolumeMixer? _mixer;
-    private MixerWindow? _mixerWindow;
-    private DispatcherTimer? _mediaTimer;
-    private readonly HashSet<string> _audioAppsSeen = new(StringComparer.OrdinalIgnoreCase);
-    private WeatherService? _weather;
-    private DispatcherTimer? _weatherTimer;
-    private SystemStats? _system;
-    private GpuStats? _gpu;
-    private PomodoroTimer? _pomodoro;
-    private StopwatchTimer? _stopwatch;
-    private DispatcherTimer? _tickTimer;
-    private DispatcherTimer? _rearmTimer;
-    private DateTime _lastRearm = DateTime.Now.Date.AddDays(-1);
-    private string? _roomError;
+    private MediaService? _media;
+    private WidgetHost? _host;
     private DeckConfig _config = new();
+
+    /// <summary>Edit mode lives here rather than in the page, because the tray can switch it on.</summary>
+    private bool _editing;
+
     private IntPtr _hwnd;
 
     public MainWindow()
@@ -142,6 +114,7 @@ public partial class MainWindow : Window
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         _config = DeckConfig.Load();
+        if (LayoutMigration.Prepare(_config)) _config.Save();
 
         _notifier = new Notifier();
         _notifier.ExitRequested += Close;
@@ -165,13 +138,8 @@ public partial class MainWindow : Window
         _notifier.AddExitItem();
 
         ApplyHotkeys();
-
         StartAudio();
-        StartTimers();
-        StartMedia();
-        StartWeather();
-        StartClaudeWatcher();
-        StartRearmTimer();
+        StartWidgets();
 
         try
         {
@@ -193,16 +161,17 @@ public partial class MainWindow : Window
             // The page can only be told the state once its listener exists.
             Web.CoreWebView2.NavigationCompleted += (_, _) =>
             {
-                PushState();
-                PushTimers();
-                PushPrivacy();
-                PushWeather();
-                PushClaude();
-                PushMedia();
+                PushLayout();
+                _host?.PushAll();
             };
 
-            string path = Path.Combine(AppContext.BaseDirectory, "ui", "deck.html");
-            Web.CoreWebView2.NavigateToString(File.ReadAllText(path));
+            // Served files can be cached across runs; after an update the deck must never run
+            // yesterday's scripts against today's host.
+            await Web.CoreWebView2.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache);
+
+            Web.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                UiHost, Path.Combine(AppContext.BaseDirectory, "ui"), CoreWebView2HostResourceAccessKind.Deny);
+            Web.CoreWebView2.Navigate($"https://{UiHost}/deck.html");
         }
         catch (Exception ex)
         {
@@ -210,6 +179,10 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// The microphone controller lives outside the widgets: the mic tile, the noise tile and the
+    /// Microphones window all read the same devices.
+    /// </summary>
     private void StartAudio()
     {
         _mic = new MicController();
@@ -222,563 +195,188 @@ public partial class MainWindow : Window
         }
 
         _mic.Select(_config.MuteDeviceIds);
-
-        // Notifications arrive on a COM thread; the UI and WebView2 are thread-affine.
-        _mic.StateChanged += () => Dispatcher.BeginInvoke(PushState);
-
-        StartRoomMonitor();
     }
 
-    private void StartRoomMonitor()
+    private void StartWidgets()
     {
-        _room = new RoomMonitor { Threshold = _config.RoomThreshold, Armed = true };
-        _room.LevelChanged += level => Dispatcher.BeginInvoke(() => PushLevel(level));
-        _room.Failed += message => Dispatcher.BeginInvoke(() =>
+        var tick = new TickService();
+        _media = new MediaService();
+
+        var context = new WidgetContext
         {
-            _roomError = message;
-            PushState();
+            Config = _config,
+            Notifier = _notifier!,
+            Mic = _mic!,
+            Tick = tick,
+            Media = _media,
+            Privacy = new PrivacyService(tick),
+            Dispatcher = Dispatcher,
+            Post = PostWidget
+        };
+
+        _host = new WidgetHost(
+            placement => WidgetFactory.Create(placement, context),
+            (kind, reference) => PostWidget(kind, reference, new { failed = true }));
+
+        _host.Sync(_config.Layout);
+    }
+
+    private void PostWidget(string kind, string? reference, object data) =>
+        PostJson(new { type = "widget", kind, @ref = reference, data });
+
+    private void PostJson(object message)
+    {
+        if (Web.CoreWebView2 is null) return;
+        Web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(message));
+    }
+
+    /// <summary>
+    /// Everything the page needs to draw the grid: where each widget sits and how big it is,
+    /// whether edit mode is on, and what the library panel can offer.
+    /// </summary>
+    private void PushLayout()
+    {
+        var layout = new DeckLayout(_config.Layout);
+
+        PostJson(new
+        {
+            type = "layout",
+            editing = _editing,
+            columns = DeckLayout.Columns,
+            rows = DeckLayout.Rows,
+            placements = _config.Layout.Select(p =>
+            {
+                var size = WidgetCatalog.Find(p.Kind, p.Variant)!;
+                return new
+                {
+                    kind = p.Kind,
+                    variant = p.Variant,
+                    @ref = p.Ref,
+                    col = p.Col,
+                    row = p.Row,
+                    w = size.Width,
+                    h = size.Height
+                };
+            }),
+            library = BuildLibrary(layout)
         });
-        _room.Breached += () => Dispatcher.BeginInvoke(() =>
-            _notifier?.Show("Keep it down 🤫", "The room is over your limit."));
-
-        StartRoomCapture();
-    }
-
-    /// <summary>(Re)opens the capture stream on whichever device is currently the room sensor.</summary>
-    private void StartRoomCapture()
-    {
-        if (_room is null) return;
-
-        _room.Stop();
-        _roomError = null;
-
-        if (_config.RoomSensorDeviceId is not { } id)
-        {
-            _roomError = "no room sensor selected";
-            return;
-        }
-
-        var device = _mic?.Find(id);
-        if (device is null)
-        {
-            _roomError = "room sensor not found";
-            return;
-        }
-
-        _room.Start(device);
-    }
-
-    private void ApplyDeviceConfig()
-    {
-        _mic?.Select(_config.MuteDeviceIds);
-        StartRoomCapture();
-        PushState();
-    }
-
-    private void StartTimers()
-    {
-        _system = new SystemStats();
-        _gpu = new GpuStats();
-
-        _pomodoro = new PomodoroTimer();
-        _pomodoro.Changed += PushTimers;
-        _pomodoro.Alert += message =>
-        {
-            // Played directly rather than leaning on the notification's own sound, which Focus
-            // Assist and fullscreen games can suppress. A timer you don't hear is not a timer.
-            SystemSounds.Exclamation.Play();
-            _notifier?.Show("Pomodoro", message);
-            PushTimers();
-        };
-
-        _stopwatch = new StopwatchTimer();
-        _stopwatch.Changed += PushTimers;
-
-        _tickTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _tickTimer.Tick += (_, _) =>
-        {
-            _pomodoro.Tick();
-            if (_pomodoro.Phase != PomodoroPhase.Idle || _stopwatch.IsRunning) PushTimers();
-            PollPrivacy();
-            SampleStats();
-            PushClock();
-        };
-        _tickTimer.Start();
-    }
-
-    private async void StartMedia()
-    {
-        _nowPlaying = new NowPlaying();
-        _mixer = new VolumeMixer();
-
-        await _nowPlaying.InitialiseAsync();
-
-        _mediaTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _mediaTimer.Tick += async (_, _) => await RefreshMediaAsync();
-        _mediaTimer.Start();
-
-        await RefreshMediaAsync();
-    }
-
-    private async Task RefreshMediaAsync()
-    {
-        if (_nowPlaying is null || _mixer is null) return;
-
-        await _nowPlaying.RefreshAsync();
-        _mixer.Refresh();
-        RestoreRememberedLevels();
-        PushMedia();
     }
 
     /// <summary>
-    /// Applies a remembered level when an app's audio session first appears — the Wave Link
-    /// behaviour of a source keeping its level across restarts.
-    ///
-    /// Deliberately only on appearance, never continuously: re-asserting every tick would fight
-    /// the user if they changed a volume anywhere else in Windows.
+    /// What the library offers: every built-in widget not on the deck, in each of its sizes,
+    /// then the presets and shortcuts that aren't on it.
     /// </summary>
-    private void RestoreRememberedLevels()
+    private IEnumerable<object> BuildLibrary(DeckLayout layout)
     {
-        if (_mixer is null) return;
+        foreach (var kind in layout.UnplacedBuiltIns())
+            yield return LibraryItem(kind, null, kind.Title);
 
-        foreach (var app in _mixer.Apps)
-        {
-            // Remember where the app lives so its icon still resolves when it isn't running.
-            if (app.Path is not null) _config.MixerAppPaths[app.Name] = app.Path;
+        var preset = WidgetCatalog.Find("preset")!;
+        foreach (var p in _config.Presets.Where(p => !layout.IsPlaced("preset", p.Id)))
+            yield return LibraryItem(preset, p.Id, p.Name);
 
-            if (_audioAppsSeen.Contains(app.Name)) continue;
-
-            if (_config.MixerLevels.TryGetValue(app.Name, out int level))
-                _mixer.SetVolume(app.Name, level / 100f);
-        }
-
-        _audioAppsSeen.Clear();
-        foreach (var app in _mixer.Apps) _audioAppsSeen.Add(app.Name);
+        var shortcut = WidgetCatalog.Find("shortcut")!;
+        foreach (var s in _config.Shortcuts.Where(s => !layout.IsPlaced("shortcut", s.Id)))
+            yield return LibraryItem(shortcut, s.Id, s.Label);
     }
 
-    private void PushMedia()
+    private static object LibraryItem(WidgetKind kind, string? reference, string title) => new
     {
-        if (Web.CoreWebView2 is null || _nowPlaying is null || _mixer is null) return;
-
-        Web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
-        {
-            type = "media",
-            hasSession = _nowPlaying.HasSession,
-            playing = _nowPlaying.IsPlaying,
-            title = _nowPlaying.Title,
-            artist = _nowPlaying.Artist,
-            app = _nowPlaying.App,
-            mixerApps = _mixer.Apps.Count,
-            mixerActive = _mixer.Apps.Count(a => a.Active),
-            mixerRows = BuildMixerRows()
-        }));
-    }
-
-    /// <summary>
-    /// The three rows the deck shows. Remembered apps always appear, running or not, so a level
-    /// can be set for something that isn't open yet; whatever else is currently making sound
-    /// fills the remaining slots.
-    /// </summary>
-    private object[] BuildMixerRows()
-    {
-        if (_mixer is null) return [];
-
-        var live = _mixer.Apps.ToDictionary(a => a.Name, StringComparer.OrdinalIgnoreCase);
-
-        string[] names = _config.MixerLevels.Keys
-            .Concat(_mixer.Apps.Where(a => a.Active).Select(a => a.Name))
-            .Concat(_mixer.Apps.Select(a => a.Name))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(MixerRowLimit)
-            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        return names.Select(object (name) =>
-        {
-            bool running = live.TryGetValue(name, out var app);
-            string? path = running ? app!.Path : _config.MixerAppPaths.GetValueOrDefault(name);
-
-            var identity = AppIdentityResolver.Resolve(path);
-
-            return new
-            {
-                name,
-                label = identity.DisplayName ?? name,
-                icon = identity.IconDataUri,
-                // A running app's real volume is the truth; a remembered one falls back to
-                // whatever level was stored for its next launch.
-                volume = running
-                    ? (int)Math.Round(app!.Volume * 100)
-                    : _config.MixerLevels.GetValueOrDefault(name, 100),
-                muted = running && app!.Muted,
-                active = running && app!.Active,
-                running
-            };
-        }).ToArray();
-    }
-
-    /// <summary>
-    /// Drops a remembered app from the mixer. Needed because a remembered app is shown whether
-    /// or not it's running, so an uninstalled one would otherwise sit there forever.
-    /// </summary>
-    private void ForgetMixerApp(string name)
-    {
-        if (!_config.MixerLevels.Remove(name) & !_config.MixerAppPaths.Remove(name)) return;
-
-        _config.Save();
-        _mixer?.Refresh();
-        PushMedia();
-    }
-
-    /// <summary>
-    /// Inline mixer edits. Volume and mute arrive on the same message so a drag and a mute
-    /// press can't race each other into two different refreshes.
-    /// </summary>
-    private void ApplyMixerChange(string json)
-    {
-        if (_mixer is null) return;
-
-        try
-        {
-            using var document = JsonDocument.Parse(json);
-            var root = document.RootElement;
-
-            if (!root.TryGetProperty("name", out var nameElement)) return;
-            string? name = nameElement.GetString();
-            if (string.IsNullOrWhiteSpace(name)) return;
-
-            if (root.TryGetProperty("volume", out var volume) && volume.ValueKind == JsonValueKind.Number)
-            {
-                int level = Math.Clamp(volume.GetInt32(), 0, 100);
-
-                // Remember it whether or not the app is running — that's the whole point.
-                _config.MixerLevels[name] = level;
-                _mixer.SetVolume(name, level / 100f);
-            }
-
-            if (root.TryGetProperty("muted", out var muted) &&
-                muted.ValueKind is JsonValueKind.True or JsonValueKind.False)
-            {
-                _mixer.SetMute(name, muted.GetBoolean());
-                // Mute is a discrete press, so reflect it immediately rather than on the next tick.
-                _mixer.Refresh();
-                PushMedia();
-            }
-        }
-        catch
-        {
-            // Malformed message from the page; ignore.
-        }
-    }
-
-    private void OpenMixer()
-    {
-        if (_mixer is null) return;
-
-        if (_mixerWindow is { IsVisible: true })
-        {
-            _mixerWindow.Activate();
-            return;
-        }
-
-        _mixerWindow = new MixerWindow(_mixer);
-        _mixerWindow.Closed += (_, _) => _mixerWindow = null;
-        _mixerWindow.Show();
-        _mixerWindow.Activate();
-    }
-
-    private void StartClaudeWatcher()
-    {
-        _claude = new ClaudeWatcher();
-
-        // Two seconds: fast enough to notice a turn ending, slow enough that tailing several
-        // multi-megabyte transcripts costs nothing worth measuring.
-        _claudeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _claudeTimer.Tick += (_, _) => _ = PollClaudeAsync();
-        _claudeTimer.Start();
-
-        _ = PollClaudeAsync();
-    }
-
-    private async Task PollClaudeAsync()
-    {
-        if (_claude is null || _claudePolling) return;
-
-        _claudePolling = true;
-        try
-        {
-            // Reads the disk — the first pass of the day walks today's whole transcripts, so
-            // it must not run on the UI thread.
-            await Task.Run(_claude.Poll);
-
-            NotifyNewlyWaiting();
-            PushClaude();
-        }
-        finally
-        {
-            _claudePolling = false;
-        }
-    }
-
-    /// <summary>
-    /// The tile only helps if you look at it, and you're usually looking at another monitor —
-    /// so a session becoming your problem is worth a notification.
-    /// </summary>
-    private void NotifyNewlyWaiting()
-    {
-        if (_claude is null) return;
-
-        var waiting = _claude.Sessions
-            .Where(s => !s.Working)
-            .Select(s => s.Name)
-            .ToHashSet(StringComparer.Ordinal);
-
-        // Don't announce everything that happens to be idle when the deck starts.
-        if (!_claudeFirstPoll && _config.ClaudeNotifications)
-        {
-            foreach (string name in waiting.Where(n => !_previouslyWaiting.Contains(n)))
-                _notifier?.Show("Claude is waiting", $"{name} finished and wants your review.");
-        }
-
-        // The seen-set is updated even while muted, so unmuting doesn't dump a backlog of
-        // notifications for sessions that went quiet an hour ago.
-        _claudeFirstPoll = false;
-        _previouslyWaiting.Clear();
-        foreach (string name in waiting) _previouslyWaiting.Add(name);
-    }
-
-    /// <summary>Repeated presses cycle, so two waiting sessions are both reachable.</summary>
-    private void FocusNextClaudeSession()
-    {
-        if (_claude is null) return;
-
-        // false sorts before true, so sessions waiting on you come first.
-        var ordered = _claude.Sessions.OrderBy(s => s.Working).ToArray();
-        if (ordered.Length == 0) return;
-
-        var target = ordered[_claudeFocusIndex % ordered.Length];
-        _claudeFocusIndex++;
-
-        if (!WindowFocus.FocusProcessWindow(target.Pid))
-            _notifier?.Show("Couldn't switch", $"No window found for {target.Name}.");
-    }
-
-    private void PushClaude()
-    {
-        if (Web.CoreWebView2 is null || _claude is null) return;
-
-        var sessions = _claude.Sessions;
-        var waiting = sessions.Where(s => !s.Working).ToArray();
-        var working = sessions.Where(s => s.Working).ToArray();
-
-        // Waiting sessions are named first: that's the state that needs you to do something.
-        string names = string.Join(" · ", waiting.Concat(working).Select(s => s.Name));
-
-        Web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
-        {
-            type = "claude",
-            waiting = waiting.Length,
-            working = working.Length,
-            names,
-            notify = _config.ClaudeNotifications
-        }));
-    }
-
-    private void StartWeather()
-    {
-        _weather = new WeatherService();
-
-        // Weather moves slowly and the service is free — 15 minutes is plenty and stays polite.
-        _weatherTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(15) };
-        _weatherTimer.Tick += async (_, _) => await RefreshWeatherAsync();
-        _weatherTimer.Start();
-
-        _ = RefreshWeatherAsync();
-    }
-
-    private async Task RefreshWeatherAsync()
-    {
-        if (_weather is null) return;
-
-        await _weather.RefreshAsync();
-        PushWeather();
-    }
-
-    private void PushWeather()
-    {
-        if (Web.CoreWebView2 is null || _weather is null) return;
-
-        var reading = _weather.Latest;
-        var (icon, label) = reading is null
-            ? ("🌡️", "—")
-            : WeatherService.Describe(reading.Code);
-
-        Web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
-        {
-            type = "weather",
-            available = reading is not null,
-            icon,
-            label,
-            temp = reading is null ? "–" : $"{Math.Round(reading.TempC)}°",
-            high = reading is null ? "" : $"{Math.Round(reading.HighC)}°",
-            low = reading is null ? "" : $"{Math.Round(reading.LowC)}°",
-            feels = reading is null ? "" : $"{Math.Round(reading.FeelsC)}°",
-            // Stale is surfaced rather than hidden: a cached number shown as current is the
-            // same lying-tile problem as a mute button that didn't mute.
-            stale = _weather.IsStale,
-            error = _weather.Error
-        }));
-    }
-
-    private void StartRearmTimer()
-    {
-        _rearmTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
-        _rearmTimer.Tick += (_, _) =>
-        {
-            var now = DateTime.Now;
-            var todayAt = now.Date.AddHours(DailyRearmHour);
-
-            if (now < todayAt || _lastRearm >= todayAt) return;
-
-            _lastRearm = todayAt;
-            if (_room is { Armed: false })
-            {
-                _room.Armed = true;
-                PushState();
-            }
-        };
-        _rearmTimer.Start();
-    }
-
-    private const string ThresholdPrefix = "threshold-set:";
+        kind = kind.Id,
+        @ref = reference,
+        title,
+        group = kind.PerItem ? kind.Title : null,
+        variants = kind.Variants.Select(v => new { variant = v.Id, label = v.Label, w = v.Width, h = v.Height })
+    };
 
     private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         string message = e.TryGetWebMessageAsString() ?? string.Empty;
 
-        if (message.StartsWith(ThresholdPrefix, StringComparison.Ordinal))
+        if (message.StartsWith("widget:", StringComparison.Ordinal))
+            RouteWidgetMessage(message["widget:".Length..]);
+        else if (message.StartsWith("layout:", StringComparison.Ordinal))
+            HandleLayoutOp(message["layout:".Length..]);
+    }
+
+    private void RouteWidgetMessage(string json)
+    {
+        WidgetMessage? message;
+        try
         {
-            SetThreshold(message[ThresholdPrefix.Length..]);
+            message = JsonSerializer.Deserialize<WidgetMessage>(json, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return;   // Malformed message from the page; ignore.
+        }
+
+        if (message is { Kind: { } kind, Msg: { } msg }) _host?.Route(kind, message.Ref, msg);
+    }
+
+    private void HandleLayoutOp(string json)
+    {
+        LayoutOp? op;
+        try
+        {
+            op = JsonSerializer.Deserialize<LayoutOp>(json, JsonOptions);
+        }
+        catch (JsonException)
+        {
             return;
         }
 
-        if (message.StartsWith("mixer-set:", StringComparison.Ordinal))
+        if (op is { Op: "delete", Kind: { } kind }) DeleteItem(kind, op.Ref);
+    }
+
+    /// <summary>
+    /// Permanently deletes a preset or shortcut, from a right-click on its tile or its library
+    /// card. MessageBox rather than an in-deck confirm: a dialog inside a non-activating window
+    /// can't reliably take the keyboard, and deleting should be deliberate.
+    /// </summary>
+    private void DeleteItem(string kind, string? reference)
+    {
+        if (reference is null) return;
+
+        if (kind == "preset" && _config.Presets.FirstOrDefault(p => p.Id == reference) is { } preset)
         {
-            ApplyMixerChange(message["mixer-set:".Length..]);
+            var answer = MessageBox.Show(
+                $"Delete the preset \"{preset.Name}\"?\n\nThis only removes the button. Nothing on your screen changes.",
+                "Delete preset", MessageBoxButton.YesNo, MessageBoxImage.Question);
+
+            if (answer != MessageBoxResult.Yes) return;
+
+            _config.Presets.Remove(preset);
+            _config.Hotkeys.RemoveAll(h => h.Action == WidgetCatalog.PresetActionPrefix + reference);
+            ApplyHotkeys(notifyOnConflict: false);
+        }
+        else if (kind == "shortcut" && _config.Shortcuts.FirstOrDefault(s => s.Id == reference) is { } shortcut)
+        {
+            var answer = MessageBox.Show(
+                $"Remove the \"{shortcut.Label}\" shortcut?",
+                "Remove shortcut", MessageBoxButton.YesNo, MessageBoxImage.Question);
+
+            if (answer != MessageBoxResult.Yes) return;
+
+            _config.Shortcuts.Remove(shortcut);
+        }
+        else
+        {
             return;
         }
 
-        if (message.StartsWith("mixer-forget:", StringComparison.Ordinal))
-        {
-            ForgetMixerApp(message["mixer-forget:".Length..]);
-            return;
-        }
+        var layout = new DeckLayout(_config.Layout);
+        layout.Remove(kind, reference);
+        CommitLayout(layout);
+    }
 
-        if (message == "mixer-commit")
-        {
-            // Saved on release rather than on every pixel of a drag.
-            _config.Save();
-            return;
-        }
-
-        if (TryIndexed(message, "press:preset:", out int runIndex))
-        {
-            _ = RunPresetAsync(runIndex);
-            return;
-        }
-
-        if (TryIndexed(message, "preset-delete:", out int deleteIndex))
-        {
-            DeletePreset(deleteIndex);
-            return;
-        }
-
-        if (TryIndexed(message, "press:shortcut:", out int shortcutIndex))
-        {
-            RunShortcut(shortcutIndex);
-            return;
-        }
-
-        if (TryIndexed(message, "shortcut-delete:", out int shortcutDelete))
-        {
-            DeleteShortcut(shortcutDelete);
-            return;
-        }
-
-        switch (message)
-        {
-            case "press:capture":
-                OpenCapture();
-                break;
-
-            case "press:claude":
-                FocusNextClaudeSession();
-                break;
-
-            case "claude-notify-toggle":
-                _config.ClaudeNotifications = !_config.ClaudeNotifications;
-                _config.Save();
-                PushClaude();
-                break;
-
-            case "press:nowplaying":
-                _ = _nowPlaying?.TogglePlayPauseAsync();
-                break;
-
-            case "nowplaying-next":
-                _ = _nowPlaying?.SkipNextAsync();
-                break;
-
-            case "press:mixer":
-                OpenMixer();
-                break;
-
-            case "threshold-commit":
-                _config.Save();
-                PushState();
-                break;
-
-            case "press:mute":
-                _mic?.Toggle();
-                break;
-
-            case "press:room":
-                if (_room is not null)
-                {
-                    _room.Armed = !_room.Armed;
-                    PushState();
-                }
-                break;
-
-            case "press:room-calibrate":
-                if (_room is not null)
-                {
-                    _config.RoomThreshold = _room.Calibrate();
-                    _config.Save();
-                    PushState();
-                }
-                break;
-
-            case "press:pomodoro":
-                _pomodoro?.Toggle();
-                break;
-
-            case "pomodoro-reset":
-                _pomodoro?.ResetSession();
-                break;
-
-            case "press:stopwatch":
-                _stopwatch?.Toggle();
-                break;
-
-            case "stopwatch-reset":
-                _stopwatch?.Reset();
-                break;
-
-            case "press:exit":
-                Close();
-                break;
-        }
+    /// <summary>Saves a changed layout, starts and stops widgets to match, and redraws the page.</summary>
+    private void CommitLayout(DeckLayout layout)
+    {
+        _config.Layout = layout.Placements.ToList();
+        _config.Save();
+        _host?.Sync(_config.Layout);
+        PushLayout();
     }
 
     private void ApplyHotkeys(bool notifyOnConflict = true)
@@ -789,39 +387,17 @@ public partial class MainWindow : Window
             _notifier?.Show("Some shortcuts couldn't be registered", string.Join("\n", _hotkeys.Conflicts));
     }
 
-    /// <summary>Fired by a global hotkey. Window messages already arrive on the UI thread.</summary>
-    private void RunAction(string action)
+    /// <summary>
+    /// Fired by a global hotkey; window messages already arrive on the UI thread. Only widgets
+    /// on the deck can answer, so a hotkey for a widget in the library does nothing.
+    /// </summary>
+    private void RunAction(string action) => _host?.Hotkey(action);
+
+    private void ApplyDeviceConfig()
     {
-        switch (action)
-        {
-            case "mute":
-                _mic?.Toggle();
-                break;
-
-            case "room":
-                if (_room is not null)
-                {
-                    _room.Armed = !_room.Armed;
-                    PushState();
-                }
-                break;
-
-            case "pomodoro":
-                _pomodoro?.Toggle();
-                break;
-
-            case "stopwatch":
-                _stopwatch?.Toggle();
-                break;
-
-            case "nowplaying":
-                _ = _nowPlaying?.TogglePlayPauseAsync();
-                break;
-
-            default:
-                if (TryIndexed(action, "preset:", out int index)) _ = RunPresetAsync(index);
-                break;
-        }
+        _mic?.Select(_config.MuteDeviceIds);
+        _host?.Find<NoiseWidget>()?.RestartCapture();
+        _host?.PushAll();
     }
 
     private void OpenDevices()
@@ -873,306 +449,23 @@ public partial class MainWindow : Window
         _hotkeyWindow.Activate();
     }
 
-    private static bool TryIndexed(string message, string prefix, out int index)
-    {
-        index = -1;
-        return message.StartsWith(prefix, StringComparison.Ordinal)
-               && int.TryParse(message[prefix.Length..], out index);
-    }
-
-    /// <summary>
-    /// Capture runs in its own ordinary window: the deck can never take keyboard focus, and
-    /// naming a preset and typing URLs both need a keyboard.
-    /// </summary>
-    private void OpenCapture()
-    {
-        var capture = new CaptureWindow();
-        capture.Saved += preset =>
-        {
-            _config.Presets.Add(preset);
-            _config.Save();
-            PushState();
-        };
-        capture.Show();
-        capture.Activate();
-    }
-
-    private async Task RunPresetAsync(int index)
-    {
-        if (index < 0 || index >= _config.Presets.Count) return;
-        var preset = _config.Presets[index];
-
-        PushPreset(index, "running", null);
-
-        try
-        {
-            var report = await new PresetRunner().RunAsync(preset);
-            PushPreset(index, "done", report.Summary());
-
-            if (report.Failed.Count > 0)
-            {
-                _notifier?.Show($"{preset.Name}: {report.Failed.Count} didn't work",
-                    string.Join("\n", report.Failed.Take(4)));
-            }
-        }
-        catch (Exception ex)
-        {
-            PushPreset(index, "error", ex.Message);
-        }
-    }
-
-    private void RunShortcut(int index)
-    {
-        if (index < 0 || index >= _config.Shortcuts.Count) return;
-        var shortcut = _config.Shortcuts[index];
-
-        try
-        {
-            var info = new ProcessStartInfo(shortcut.FileName) { UseShellExecute = true };
-            if (!string.IsNullOrWhiteSpace(shortcut.Arguments)) info.Arguments = shortcut.Arguments;
-
-            Process.Start(info);
-        }
-        catch (Exception ex)
-        {
-            _notifier?.Show($"{shortcut.Label} didn't open", ex.Message);
-        }
-    }
-
-    private void DeleteShortcut(int index)
-    {
-        if (index < 0 || index >= _config.Shortcuts.Count) return;
-
-        var answer = MessageBox.Show(
-            $"Remove the \"{_config.Shortcuts[index].Label}\" shortcut?",
-            "Remove shortcut", MessageBoxButton.YesNo, MessageBoxImage.Question);
-
-        if (answer != MessageBoxResult.Yes) return;
-
-        _config.Shortcuts.RemoveAt(index);
-        _config.Save();
-        PushState();
-    }
-
-    private void DeletePreset(int index)
-    {
-        if (index < 0 || index >= _config.Presets.Count) return;
-        var preset = _config.Presets[index];
-
-        // MessageBox rather than an in-deck confirm: a dialog inside a non-activating window
-        // can't reliably take the keyboard, and deleting a preset should be deliberate.
-        var answer = MessageBox.Show(
-            $"Delete the preset \"{preset.Name}\"?\n\nThis only removes the button. Nothing on your screen changes.",
-            "Delete preset", MessageBoxButton.YesNo, MessageBoxImage.Question);
-
-        if (answer != MessageBoxResult.Yes) return;
-
-        _config.Presets.RemoveAt(index);
-        _config.Save();
-        PushState();
-    }
-
-    private void PushPreset(int index, string state, string? summary)
-    {
-        if (Web.CoreWebView2 is null) return;
-
-        Web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
-        {
-            type = "preset",
-            index,
-            state,
-            summary
-        }));
-    }
-
-    /// <summary>
-    /// Live threshold updates while the handle is being dragged: applied at once so the meter's
-    /// over/under colouring tracks the mouse, but only written to disk on threshold-commit.
-    /// </summary>
-    private void SetThreshold(string raw)
-    {
-        if (_room is null) return;
-        if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double value)) return;
-
-        value = Math.Clamp(value, 0, 100);
-        _room.Threshold = value;
-        _config.RoomThreshold = value;
-    }
-
-    private void PushState()
-    {
-        if (Web.CoreWebView2 is null || _mic is null) return;
-
-        var byId = _mic.Devices.ToDictionary(d => d.Id);
-
-        // Hardware names ("Focusrite USB Audio", "C922 Pro Stream Webcam") rather than endpoint
-        // names ("Analogue 1 + 2", "Mikrofon") — on a narrow tile the hardware is what tells you
-        // which physical thing is involved.
-        string[] muteNames = _config.MuteDeviceIds
-            .Select(id => byId.TryGetValue(id, out var d) ? d.Hardware : "(missing device)")
-            .ToArray();
-
-        string? roomName = _config.RoomSensorDeviceId is { } roomId && byId.TryGetValue(roomId, out var room)
-            ? room.Hardware
-            : null;
-
-        Web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
-        {
-            type = "state",
-            muted = !_mic.AnyLive,
-            muteDevices = muteNames,
-            roomDevice = roomName,
-            roomArmed = _room?.Armed ?? false,
-            roomRunning = _room?.IsRunning ?? false,
-            roomThreshold = Math.Round(_config.RoomThreshold),
-            roomError = _roomError,
-            presets = _config.Presets.Select(p => new { name = p.Name, count = p.Entries.Count }).ToArray(),
-            shortcuts = _config.Shortcuts.Select(s => new { label = s.Label, note = s.Note ?? "" }).ToArray()
-        }));
-    }
-
-    private CapabilityUse _camera = CapabilityUse.None;
-    private CapabilityUse _microphone = CapabilityUse.None;
-
-    private void PollPrivacy()
-    {
-        var camera = CapabilityWatcher.Query("webcam");
-        var microphone = CapabilityWatcher.Query("microphone");
-
-        // Only push on change: this runs every second and the page repaints on every message.
-        if (Same(camera, _camera) && Same(microphone, _microphone)) return;
-
-        _camera = camera;
-        _microphone = microphone;
-        PushPrivacy();
-    }
-
-    private static bool Same(CapabilityUse a, CapabilityUse b) =>
-        a.InUse == b.InUse && a.Describe() == b.Describe();
-
-    private void PushPrivacy()
-    {
-        if (Web.CoreWebView2 is null) return;
-
-        Web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
-        {
-            type = "privacy",
-            camera = new { inUse = _camera.InUse, apps = _camera.Describe() },
-            microphone = new { inUse = _microphone.InUse, apps = _microphone.Describe() }
-        }));
-    }
-
-    private string _lastClockPayload = "";
-
-    private void PushClock()
-    {
-        if (Web.CoreWebView2 is null) return;
-
-        string payload = JsonSerializer.Serialize(new
-        {
-            type = "clock",
-            cities = WorldClock.Now().Select(c => new
-            {
-                label = c.Label,
-                time = c.Time,
-                day = c.DayOffset,
-                local = c.IsLocal
-            })
-        });
-
-        // Ticks every second but the display only changes once a minute.
-        if (payload == _lastClockPayload) return;
-
-        _lastClockPayload = payload;
-        Web.CoreWebView2.PostWebMessageAsJson(payload);
-    }
-
-    private void PushTimers()
-    {
-        if (Web.CoreWebView2 is null || _pomodoro is null || _stopwatch is null) return;
-
-        Web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
-        {
-            type = "timers",
-            pomodoro = new
-            {
-                phase = _pomodoro.Phase.ToString().ToLowerInvariant(),
-                remaining = FormatCountdown(_pomodoro.Remaining),
-                blocks = _pomodoro.CompletedBlocks,
-                awaiting = _pomodoro.AwaitingNextBlock
-            },
-            stopwatch = new
-            {
-                running = _stopwatch.IsRunning,
-                elapsed = FormatClock(_stopwatch.Elapsed),
-                hasElapsed = _stopwatch.HasElapsed
-            }
-        }));
-    }
-
-    /// <summary>Rounded up, so a block that has just started reads 25:00 rather than 24:59.</summary>
-    private static string FormatCountdown(TimeSpan remaining) =>
-        FormatClock(TimeSpan.FromSeconds(Math.Ceiling(remaining.TotalSeconds)));
-
-    private static string FormatClock(TimeSpan value) => value.TotalHours >= 1
-        ? $"{(int)value.TotalHours}:{value.Minutes:00}:{value.Seconds:00}"
-        : $"{value.Minutes:00}:{value.Seconds:00}";
-
-    private void PushLevel(double level)
-    {
-        if (Web.CoreWebView2 is null) return;
-
-        Web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
-        {
-            type = "level",
-            value = Math.Round(level, 1),
-            over = level > (_room?.Threshold ?? 100)
-        }));
-    }
-
-    private void SampleStats()
-    {
-        _system?.Sample();
-        _gpu?.Sample();
-        PushSystem();
-    }
-
-    private void PushSystem()
-    {
-        if (Web.CoreWebView2 is null || _system is null) return;
-
-        bool hasGpu = _gpu is { IsAvailable: true };
-
-        Web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
-        {
-            type = "system",
-            cpu = Math.Round(_system.CpuPercent),
-            ram = Math.Round(_system.RamPercent),
-            gpuAvailable = hasGpu,
-            gpu = hasGpu ? Math.Round(_gpu!.GpuPercent) : 0
-        }));
-    }
-
     private void Cleanup()
     {
         App.ReleaseScreenSpace = null;
-        _tickTimer?.Stop();
-        _weatherTimer?.Stop();
-        _weather?.Dispose();
-        _claudeTimer?.Stop();
-        _mediaTimer?.Stop();
-        _mixer?.Dispose();
-        _rearmTimer?.Stop();
 
-        // The room monitor holds a capture stream on a device the mic controller owns —
-        // it has to let go first.
-        _room?.Dispose();
+        // Widgets first: the noise tile holds a capture stream on a device the mic controller
+        // owns, so it has to let go before the controller is disposed.
+        _host?.StopAll();
+        _media?.Dispose();
         _mic?.Dispose();
 
-        _gpu?.Dispose();
         _hotkeys?.Dispose();
         _notifier?.Dispose();
         _tracker?.Dispose();
         _appBar?.Remove();
     }
+
+    private sealed record WidgetMessage(string? Kind, string? Ref, string? Msg);
+
+    private sealed record LayoutOp(string? Op, string? Kind, string? Variant, string? Ref, int Col, int Row);
 }
