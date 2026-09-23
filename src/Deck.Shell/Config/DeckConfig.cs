@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Deck.Shell.Audio;
+using Deck.Shell.Layout;
 
 namespace Deck.Shell.Config;
 
@@ -46,6 +47,15 @@ internal sealed class DeckConfig
 
     /// <summary>Global shortcuts, keyed by action id.</summary>
     public List<Hotkeys.HotkeyBinding> Hotkeys { get; set; } = [];
+
+    /// <summary>Where each widget sits on the deck. Anything not listed here is in the library.</summary>
+    public List<WidgetPlacement> Layout { get; set; } = [];
+
+    /// <summary>
+    /// Whether the pre-library layout has been migrated. Tracked separately from the layout
+    /// itself, so taking every widget off the deck can't bring the old layout back.
+    /// </summary>
+    public bool LayoutInitialised { get; set; }
 
     /// <summary>
     /// Whether autostart has ever been set up. Tracked separately from whether it is currently

@@ -26,6 +26,13 @@ internal sealed class PresetEntry
 
 internal sealed class Preset
 {
+    /// <summary>
+    /// Stable identity for the deck layout and hotkeys. List position used to serve, but it
+    /// shifts whenever an earlier preset is deleted. Configs written before ids existed get one
+    /// on load, and the migration saves it.
+    /// </summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
     public string Name { get; set; } = "PRESET";
     public List<PresetEntry> Entries { get; set; } = [];
 }
