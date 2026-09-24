@@ -1,0 +1,131 @@
+<meta charset="utf-8" />
+<title>Calendar</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #171b21;
+    --line: #2a313b;
+    --text: #e6eaf0;
+    --dim: #8b95a4;
+    --accent: #3fb950;
+    --danger: #f85149;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+
+  body { display: grid; grid-template-rows: auto 1fr auto; }
+
+  header { padding: 20px 24px 10px; }
+  h1 { margin: 0 0 4px; font-size: 19px; font-weight: 650; }
+  .hint { color: var(--dim); font-size: 13px; }
+
+  main { padding: 6px 24px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+
+  textarea {
+    flex: 1;
+    min-height: 110px;
+    resize: none;
+    background: #0e1116;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 10px 12px;
+    font: 12.5px/1.5 Consolas, "Cascadia Mono", monospace;
+  }
+  textarea:focus { outline: none; border-color: var(--accent); }
+
+  .status { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .status .row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  .status .ok { color: var(--accent); }
+  .status .bad { color: var(--danger); }
+  .status .checking { color: var(--dim); }
+
+  footer {
+    padding: 14px 24px 20px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+  }
+
+  button {
+    border-radius: 8px;
+    padding: 9px 18px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--text);
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #08130b; }
+  button:hover { filter: brightness(1.12); }
+</style>
+
+<header>
+  <h1>Calendar</h1>
+  <div class="hint">
+    Paste your calendar's secret iCal address, one per line. In Google Calendar: Settings →
+    your calendar → Integrate calendar → Secret address in iCal format. The deck keeps these on
+    this PC only.
+  </div>
+</header>
+
+<main>
+  <textarea id="links" spellcheck="false" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics"></textarea>
+  <div class="status" id="status"></div>
+</main>
+
+<footer>
+  <button id="close">Close</button>
+  <button id="save" class="primary">Save</button>
+</footer>
+
+<script>
+  const post = (m) => window.chrome.webview.postMessage(m);
+  const $ = (id) => document.getElementById(id);
+  let loaded = false;
+
+  window.chrome.webview.addEventListener('message', (ev) => {
+    const d = ev.data;
+    if (d.type !== 'calendar') return;
+    if (!loaded) {
+      $('links').value = d.links.join('\n');
+      loaded = true;
+    }
+    const host = $('status');
+    host.innerHTML = '';
+    if (d.checking) {
+      const row = document.createElement('div');
+      row.className = 'row checking';
+      row.textContent = 'Checking…';
+      host.append(row);
+      return;
+    }
+    for (const s of d.status) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const label = document.createElement('span');
+      label.textContent = s.label;
+      const result = document.createElement('span');
+      result.className = s.ok ? 'ok' : 'bad';
+      result.textContent = s.message;
+      row.append(label, result);
+      host.append(row);
+    }
+  });
+
+  $('close').addEventListener('click', () => post('close'));
+  $('save').addEventListener('click', () => {
+    const lines = $('links').value.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+    post('save:' + JSON.stringify(lines));
+  });
+</script>

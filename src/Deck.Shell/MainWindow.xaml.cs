@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Interop;
 using Deck.Shell.Audio;
+using Deck.Shell.Calendars;
 using Deck.Shell.Config;
 using Deck.Shell.Countdowns;
 using Deck.Shell.Hotkeys;
@@ -38,6 +39,8 @@ public partial class MainWindow : Window
     private HotkeyWindow? _hotkeyWindow;
     private DeviceWindow? _deviceWindow;
     private MediaService? _media;
+    private CalendarService? _calendar;
+    private CalendarWindow? _calendarWindow;
     private WidgetHost? _host;
     private DeckConfig _config = new();
 
@@ -136,6 +139,7 @@ public partial class MainWindow : Window
         _notifier.AddItem("Edit layout", EnterEditMode);
         _notifier.AddItem("Microphones…", OpenDevices);
         _notifier.AddItem("Shortcuts…", OpenHotkeys);
+        _notifier.AddItem("Calendar…", OpenCalendar);
         _notifier.AddToggle("Start with Windows", AutoStart.IsEnabled, AutoStart.Set);
         _notifier.AddExitItem();
 
@@ -210,6 +214,7 @@ public partial class MainWindow : Window
     {
         var tick = new TickService();
         _media = new MediaService();
+        _calendar = new CalendarService(_config);
 
         var context = new WidgetContext
         {
@@ -219,6 +224,7 @@ public partial class MainWindow : Window
             Tick = tick,
             Media = _media,
             Privacy = new PrivacyService(tick),
+            Calendar = _calendar,
             Dispatcher = Dispatcher,
             Post = PostWidget
         };
@@ -560,6 +566,22 @@ public partial class MainWindow : Window
         _deviceWindow.Activate();
     }
 
+    private void OpenCalendar()
+    {
+        if (_calendar is null) return;
+
+        if (_calendarWindow is { IsVisible: true })
+        {
+            _calendarWindow.Activate();
+            return;
+        }
+
+        _calendarWindow = new CalendarWindow(_config, _calendar);
+        _calendarWindow.Closed += (_, _) => _calendarWindow = null;
+        _calendarWindow.Show();
+        _calendarWindow.Activate();
+    }
+
     private void OpenHotkeys()
     {
         if (_hotkeyWindow is { IsVisible: true })
@@ -602,6 +624,7 @@ public partial class MainWindow : Window
         // owns, so it has to let go before the controller is disposed.
         _host?.StopAll();
         _media?.Dispose();
+        _calendar?.Dispose();
         _mic?.Dispose();
 
         _hotkeys?.Dispose();

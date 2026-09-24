@@ -1,5 +1,6 @@
 using System.Windows.Threading;
 using Deck.Shell.Audio;
+using Deck.Shell.Calendars;
 using Deck.Shell.Config;
 using Deck.Shell.Notifications;
 
@@ -23,6 +24,9 @@ internal sealed class WidgetContext
     public required MediaService Media { get; init; }
 
     public required PrivacyService Privacy { get; init; }
+
+    /// <summary>The iCal feeds behind Agenda and Month. Also owned by the main window, which the Calendar window needs.</summary>
+    public required CalendarService Calendar { get; init; }
 
     /// <summary>For events that arrive off the UI thread — audio notifications, capture callbacks.</summary>
     public required Dispatcher Dispatcher { get; init; }
