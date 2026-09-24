@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "deck-ui",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "http-server", "src/Deck.Shell/ui", "-p", "5178", "-c-1"],
+      "port": 5178
+    }
+  ]
+}
