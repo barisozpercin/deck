@@ -19,7 +19,14 @@ internal sealed class AgendaWidget(WidgetContext context) : WidgetBase(context, 
     private const int ReloadTicks = 60;
 
     private List<CalendarEntry> _upcoming = [];
-    private int _focus;
+
+    /// <summary>
+    /// The focused event by identity, not position: when an earlier meeting ends and drops off the
+    /// list, an index would silently slide onto the next meeting — and a click would join it.
+    /// Null means "the soonest".
+    /// </summary>
+    private string? _focusKey;
+
     private int _ticks;
     private string _lastShown = "";
 
@@ -49,8 +56,8 @@ internal sealed class AgendaWidget(WidgetContext context) : WidgetBase(context, 
                 return true;
 
             case "next":
-                int count = Visible(DateTime.Now).Count;
-                if (count > 0) _focus = (_focus + 1) % count;
+                var visible = Visible(DateTime.Now);
+                if (visible.Count > 0) _focusKey = Key(visible[(FocusIndex(visible) + 1) % visible.Count]);
                 Send(force: true);
                 return true;
 
@@ -79,7 +86,7 @@ internal sealed class AgendaWidget(WidgetContext context) : WidgetBase(context, 
         var next = AgendaText.Upcoming(Context.Calendar.Entries(now, now + LookAhead), now);
 
         // A different list means the old focus points at the wrong meeting; start again at the soonest.
-        if (!next.Select(Key).SequenceEqual(_upcoming.Select(Key))) _focus = 0;
+        if (!next.Select(Key).SequenceEqual(_upcoming.Select(Key))) _focusKey = null;
         _upcoming = next;
     }
 
@@ -87,13 +94,23 @@ internal sealed class AgendaWidget(WidgetContext context) : WidgetBase(context, 
 
     private List<CalendarEntry> Visible(DateTime now) => _upcoming.Where(e => e.End > now).ToList();
 
+    /// <summary>Where the focused event sits now; back to the soonest if it has ended or vanished.</summary>
+    private int FocusIndex(List<CalendarEntry> visible)
+    {
+        int index = _focusKey is null ? -1 : visible.FindIndex(e => Key(e) == _focusKey);
+        if (index >= 0) return index;
+
+        _focusKey = null;
+        return 0;
+    }
+
     private void Send(bool force)
     {
         var now = DateTime.Now;
         var visible = Visible(now);
-        if (_focus >= visible.Count) _focus = 0;
+        int focus = FocusIndex(visible);
 
-        var rows = visible.Skip(_focus).Concat(visible.Take(_focus)).Take(Rows).Select(e => new
+        var rows = visible.Skip(focus).Concat(visible.Take(focus)).Take(Rows).Select(e => new
         {
             title = e.Title,
             when = AgendaText.When(e.Start, e.End, now),
@@ -126,7 +143,7 @@ internal sealed class AgendaWidget(WidgetContext context) : WidgetBase(context, 
         }
         else
         {
-            var e = visible[Math.Min(_focus, visible.Count - 1)];
+            var e = visible[FocusIndex(visible)];
             url = e.JoinUrl ?? $"https://calendar.google.com/calendar/r/day/{e.Start.Year}/{e.Start.Month}/{e.Start.Day}";
         }
 
