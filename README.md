@@ -13,7 +13,7 @@ It starts with Windows and lives in the tray. Nothing else is needed day to day.
 
 - **Installed to** `%LOCALAPPDATA%\Deck\app`
 - **Settings** in `%APPDATA%\Deck\config.json`
-- **Tray icon** → Edit layout, Microphones…, Shortcuts…, Start with Windows, Exit
+- **Tray icon** → Edit layout, Microphones…, Shortcuts…, Calendar…, Start with Windows, Exit
 - **Start Menu** → Deck (if you exited and want it back)
 
 Exit from the tray rather than Task Manager: the deck reserves screen space the way the taskbar
@@ -38,6 +38,12 @@ restarting Explorer clears it.
 | MIXER row | mute that app (icon or name) | forget the app |
 | MIXER bar | drag to set volume | — |
 | MIXER tile | — | open the full mixer |
+| DICE | roll | switch d6 / d20 / coin |
+| AGENDA | join the meeting (or open the day in Google Calendar) | next event |
+| MONTH | ‹ › change month, title → back to today | — |
+| Countdown | — | edit or delete it |
+| NETWORK | — | — |
+| DISPLAY | toggle the warm reading tint (drag the bar: brightness) | — |
 | Empty cell | edit the layout | — |
 
 Any tile action can also be bound to a global keyboard shortcut — tray → **Shortcuts…**. The
@@ -58,6 +64,20 @@ Click an empty cell, or tray → **Edit layout**. In edit mode:
 A widget in the library is fully off: no polling, no listening, no notifications, and its
 keyboard shortcut does nothing (the Shortcuts window marks it "not on deck"). Removing the mic
 tile leaves the microphone as it was.
+
+## Calendar
+
+Agenda and Month read your calendar through its private iCal address. In Google Calendar:
+Settings → your calendar → **Integrate calendar** → **Secret address in iCal format**. Paste it
+into tray → **Calendar…** (one link per line; more than one calendar is fine; https only). The
+deck checks them every 10 minutes while either tile is on the deck, and keeps the links on this
+PC only.
+
+## Display
+
+The Display tile changes brightness through the monitors' own controls (DDC/CI). All of them
+move together and keep their differences. The warm tint is applied by the deck; it switches off
+when the tile is removed or the deck exits, and each screen gets its original colours back.
 
 ## Rebuilding
 
