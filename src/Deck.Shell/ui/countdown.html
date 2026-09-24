@@ -1,0 +1,124 @@
+<meta charset="utf-8" />
+<title>Countdown</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #171b21;
+    --line: #2a313b;
+    --text: #e6eaf0;
+    --dim: #8b95a4;
+    --accent: #3fb950;
+    --danger: #f85149;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+
+  body { display: grid; grid-template-rows: 1fr auto; }
+
+  main { padding: 22px 24px 8px; display: flex; flex-direction: column; gap: 16px; }
+  h1 { margin: 0; font-size: 19px; font-weight: 650; }
+
+  label { display: flex; flex-direction: column; gap: 6px; color: var(--dim); font-size: 13px; }
+  .opt { color: #5b6474; font-size: 12px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+  input {
+    background: #0e1116;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 9px 12px;
+    font: inherit;
+    color-scheme: dark;
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+  #label { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+
+  .error { color: var(--danger); font-size: 13px; min-height: 18px; }
+
+  footer {
+    padding: 14px 24px 20px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+  .spacer { flex: 1; }
+
+  button {
+    border-radius: 8px;
+    padding: 9px 18px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--text);
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #08130b; }
+  button.danger { color: var(--danger); border-color: #7d2a2f; }
+  button:hover { filter: brightness(1.12); }
+</style>
+
+<main>
+  <h1 id="heading">New countdown</h1>
+  <label>Name
+    <input id="label" maxlength="14" spellcheck="false" placeholder="VACATION" />
+  </label>
+  <div class="row">
+    <label>Date
+      <input id="date" type="date" />
+    </label>
+    <label>Time <span class="opt">optional</span>
+      <input id="time" type="time" />
+    </label>
+  </div>
+  <div class="error" id="error"></div>
+</main>
+
+<footer>
+  <button id="delete" class="danger" hidden>Delete</button>
+  <span class="spacer"></span>
+  <button id="cancel">Cancel</button>
+  <button id="save" class="primary">Save</button>
+</footer>
+
+<script>
+  const post = (m) => window.chrome.webview.postMessage(m);
+  const $ = (id) => document.getElementById(id);
+
+  window.chrome.webview.addEventListener('message', (ev) => {
+    const d = ev.data;
+    if (d.type !== 'countdown') return;
+    $('heading').textContent = d.editing ? 'Edit countdown' : 'New countdown';
+    $('label').value = d.label;
+    $('date').value = d.date;
+    $('time').value = d.time;
+    $('delete').hidden = !d.editing;
+    $('label').focus();
+  });
+
+  $('cancel').addEventListener('click', () => post('cancel'));
+  $('delete').addEventListener('click', () => post('delete'));
+
+  $('save').addEventListener('click', () => {
+    if (!$('date').value) {
+      $('error').textContent = 'Pick a date.';
+      return;
+    }
+    post('save:' + JSON.stringify({ label: $('label').value, date: $('date').value, time: $('time').value }));
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') $('save').click();
+    if (e.key === 'Escape') post('cancel');
+  });
+</script>

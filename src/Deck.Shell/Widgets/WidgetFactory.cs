@@ -19,6 +19,7 @@ internal static class WidgetFactory
         { Kind: "stopwatch" } => new StopwatchWidget(context),
         { Kind: "preset", Ref: { } id } => new PresetWidget(context, id),
         { Kind: "shortcut", Ref: { } id } => new ShortcutWidget(context, id),
+        { Kind: "countdown", Ref: { } countdownId } => new CountdownWidget(context, countdownId),
         _ => null
     };
 }

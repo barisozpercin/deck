@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Interop;
 using Deck.Shell.Audio;
 using Deck.Shell.Config;
+using Deck.Shell.Countdowns;
 using Deck.Shell.Hotkeys;
 using Deck.Shell.Interop;
 using Deck.Shell.Layout;
@@ -272,7 +273,7 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// What the library offers: every built-in widget not on the deck, in each of its sizes,
-    /// then the presets and shortcuts that aren't on it.
+    /// then the presets, shortcuts and countdowns that aren't on it.
     /// </summary>
     private IEnumerable<object> BuildLibrary(DeckLayout layout)
     {
@@ -286,6 +287,10 @@ public partial class MainWindow : Window
         var shortcut = WidgetCatalog.Find("shortcut")!;
         foreach (var s in _config.Shortcuts.Where(s => !layout.IsPlaced("shortcut", s.Id)))
             yield return LibraryItem(shortcut, s.Id, s.Label);
+
+        var countdown = WidgetCatalog.Find("countdown")!;
+        foreach (var c in _config.Countdowns.Where(c => !layout.IsPlaced("countdown", c.Id)))
+            yield return LibraryItem(countdown, c.Id, c.Label);
     }
 
     private static object LibraryItem(WidgetKind kind, string? reference, string title) => new
@@ -366,6 +371,14 @@ public partial class MainWindow : Window
                 OpenCapture(op.Col, op.Row);
                 return;
 
+            case "new-countdown":
+                OpenCountdown(null, op.Col, op.Row);
+                return;
+
+            case "edit-item" when op is { Kind: "countdown", Ref: { } countdownId }:
+                OpenCountdown(countdownId, op.Col, op.Row);
+                return;
+
             case "delete" when op.Kind is not null:
                 DeleteItem(op.Kind, op.Ref);
                 return;
@@ -402,7 +415,53 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Permanently deletes a preset or shortcut, from a right-click on its tile or its library
+    /// New or edit, in an ordinary window for the same reason as capture. A new countdown lands
+    /// in the cell the library was opened from (or waits in the library if that cell filled up).
+    /// Editing changes the saved countdown in place and re-pushes, so its tile updates at once.
+    /// </summary>
+    private void OpenCountdown(string? id, int col, int row)
+    {
+        var existing = id is null ? null : _config.Countdowns.FirstOrDefault(c => c.Id == id);
+        if (id is not null && existing is null) return;
+
+        var window = new CountdownWindow(existing);
+
+        window.Saved += result =>
+        {
+            var layout = new DeckLayout(_config.Layout);
+
+            if (existing is null)
+            {
+                _config.Countdowns.Add(result);
+                layout.Place("countdown", WidgetCatalog.Standard, result.Id, col, row);
+            }
+            else
+            {
+                existing.Label = result.Label;
+                existing.Target = result.Target;
+                existing.HasTime = result.HasTime;
+            }
+
+            CommitLayout(layout);
+            _host?.PushAll();
+        };
+
+        window.Deleted += () =>
+        {
+            if (existing is null) return;
+
+            _config.Countdowns.Remove(existing);
+            var layout = new DeckLayout(_config.Layout);
+            layout.Remove("countdown", existing.Id);
+            CommitLayout(layout);
+        };
+
+        window.Show();
+        window.Activate();
+    }
+
+    /// <summary>
+    /// Permanently deletes a preset, shortcut or countdown, from a right-click on its tile or its library
     /// card. MessageBox rather than an in-deck confirm: a dialog inside a non-activating window
     /// can't reliably take the keyboard, and deleting should be deliberate.
     /// </summary>
@@ -431,6 +490,16 @@ public partial class MainWindow : Window
             if (answer != MessageBoxResult.Yes) return;
 
             _config.Shortcuts.Remove(shortcut);
+        }
+        else if (kind == "countdown" && _config.Countdowns.FirstOrDefault(c => c.Id == reference) is { } countdown)
+        {
+            var answer = MessageBox.Show(
+                $"Delete the countdown \"{countdown.Label}\"?",
+                "Delete countdown", MessageBoxButton.YesNo, MessageBoxImage.Question);
+
+            if (answer != MessageBoxResult.Yes) return;
+
+            _config.Countdowns.Remove(countdown);
         }
         else
         {

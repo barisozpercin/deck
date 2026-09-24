@@ -63,6 +63,7 @@
   };
 
   const presets = [{ id: 'p1', name: 'WORK', count: 5 }, { id: 'p2', name: 'GAMING', count: 2 }];
+  const countdowns = [{ id: 'c1', label: 'VACATION', value: '42 days', phase: 'ahead', date: 'Fri 6 Nov 2026' }];
   let editing = false;
   let placements = [
     ['preset', 'standard', 'p1', 0, 0], ['claude', 'standard', null, 4, 0], ['weather', 'standard', null, 5, 0],
@@ -108,7 +109,10 @@
     emit({
       type: 'layout', editing, columns: 6, rows: 3,
       placements: placements.map((p) => { const [w, h] = size(p); return { ...p, w, h }; }),
-      library: builtIns.concat(items)
+      library: builtIns.concat(items, countdowns.filter((c) => !placed('countdown', c.id)).map((c) => ({
+        kind: 'countdown', ref: c.id, title: c.label, group: 'Countdown',
+        variants: [{ variant: 'standard', label: '1×1', w: 1, h: 1 }]
+      })))
     });
   }
 
@@ -116,6 +120,9 @@
     for (const [kind, data] of Object.entries(SAMPLE)) emit({ type: 'widget', kind, ref: null, data });
     for (const p of presets) {
       emit({ type: 'widget', kind: 'preset', ref: p.id, data: { name: p.name, count: p.count, state: 'idle', summary: null } });
+    }
+    for (const c of countdowns) {
+      emit({ type: 'widget', kind: 'countdown', ref: c.id, data: { label: c.label, value: c.value, phase: c.phase, date: c.date } });
     }
   }
 
@@ -148,9 +155,18 @@
         placements.push({ kind: 'preset', variant: 'standard', ref: id, col: op.col, row: op.row });
       }
       sendData();
+    } else if (op.op === 'new-countdown') {
+      const id = 'c' + (countdowns.length + 1);
+      countdowns.push({ id, label: 'NEW', value: 'tomorrow', phase: 'soon', date: 'Fri 25 Sep 2026' });
+      if (fits('countdown', 'standard', op.col, op.row, null)) {
+        placements.push({ kind: 'countdown', variant: 'standard', ref: id, col: op.col, row: op.row });
+      }
+      sendData();
     } else if (op.op === 'delete') {
       const index = presets.findIndex((p) => p.id === op.ref);
       if (index >= 0) presets.splice(index, 1);
+      const cdIndex = countdowns.findIndex((c) => c.id === op.ref);
+      if (cdIndex >= 0) countdowns.splice(cdIndex, 1);
       placements = placements.filter((p) => !same(p, op.kind, op.ref));
     }
     sendLayout();

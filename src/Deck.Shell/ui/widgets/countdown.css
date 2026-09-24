@@ -1,0 +1,12 @@
+/* --- countdown: amber when it's close, green on the day, dim once it's history --- */
+.w-countdown .cd-value {
+  font-size: 24px;
+  font-weight: 650;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.tile.w-countdown.soon { border-color: #6b5312; }
+.w-countdown.soon .cd-value, .w-countdown.soon .cd-label { color: var(--warn); }
+.tile.w-countdown.reached { background: var(--ok-bg); border-color: var(--ok-line); }
+.w-countdown.reached .cd-value, .w-countdown.reached .cd-label { color: var(--ok); }
+.tile.w-countdown.past { opacity: 0.6; }

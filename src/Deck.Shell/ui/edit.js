@@ -189,6 +189,10 @@ const Edit = (() => {
       closeLibrary();
       layoutOp({ op: 'new-preset', col, row });
     }, null));
+    cards.append(card('New countdown', 'count down to a date', false, () => {
+      closeLibrary();
+      layoutOp({ op: 'new-countdown', col, row });
+    }, null));
 
     for (const item of layout.library) {
       for (const v of item.variants) {

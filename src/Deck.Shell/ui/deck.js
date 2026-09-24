@@ -31,7 +31,8 @@ function buildTile(p) {
   tile.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     if (layout.editing) return;
-    if (def.deletable) layoutOp({ op: 'delete', kind: p.kind, ref: p.ref });
+    if (def.editable) layoutOp({ op: 'edit-item', kind: p.kind, ref: p.ref });
+    else if (def.deletable) layoutOp({ op: 'delete', kind: p.kind, ref: p.ref });
     else if (context) send(context);
   });
 
