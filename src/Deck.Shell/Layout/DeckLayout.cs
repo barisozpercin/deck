@@ -67,22 +67,19 @@ internal sealed class DeckLayout
 
     /// <summary>
     /// Drops every placement the deck can't honour: an unknown kind or size, a second copy of a
-    /// built-in, a preset or shortcut that no longer exists, anything off the grid or overlapping
-    /// an earlier tile. Dropped widgets simply end up in the library, so a damaged config never
-    /// stops the deck starting. Returns how many were dropped.
+    /// built-in, a per-item tile whose item no longer exists, anything off the grid or
+    /// overlapping an earlier tile. Dropped widgets simply end up in the library, so a damaged
+    /// config never stops the deck starting. Returns how many were dropped.
     /// </summary>
-    public int Validate(IReadOnlySet<string> presetIds, IReadOnlySet<string> shortcutIds)
+    /// <param name="itemExists">Asked once per per-item tile, with its kind and reference.</param>
+    public int Validate(Func<string, string, bool> itemExists)
     {
         var kept = new DeckLayout();
 
         foreach (var p in _placements)
         {
-            bool referenceExists = p.Kind switch
-            {
-                "preset" => p.Ref is not null && presetIds.Contains(p.Ref),
-                "shortcut" => p.Ref is not null && shortcutIds.Contains(p.Ref),
-                _ => true
-            };
+            bool referenceExists = WidgetCatalog.Find(p.Kind) is not { PerItem: true }
+                || (p.Ref is not null && itemExists(p.Kind, p.Ref));
 
             if (referenceExists) kept.Place(p.Kind, p.Variant, p.Ref, p.Col, p.Row);
         }

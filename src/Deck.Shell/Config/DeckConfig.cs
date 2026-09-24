@@ -57,6 +57,30 @@ internal sealed class DeckConfig
     /// </summary>
     public bool LayoutInitialised { get; set; }
 
+    /// <summary>Saved countdowns, one tile each. Anything not placed waits in the library.</summary>
+    public List<Countdowns.Countdown> Countdowns { get; set; } = [];
+
+    /// <summary>
+    /// iCal addresses for the Agenda and Month tiles. They are secret links: fetched from their own
+    /// server and nothing else — never logged, never shown on the deck.
+    /// </summary>
+    public List<string> CalendarLinks { get; set; } = [];
+
+    /// <summary>"d6", "d20" or "coin".</summary>
+    public string DiceMode { get; set; } = "d6";
+
+    /// <summary>Whether the Display tile's warm reading tint is on. Re-applied when that tile starts.</summary>
+    public bool DisplayTint { get; set; }
+
+    /// <summary>Whether the item behind a per-item tile (a preset, shortcut or countdown) still exists.</summary>
+    public bool HasItem(string kind, string id) => kind switch
+    {
+        "preset" => Presets.Any(p => p.Id == id),
+        "shortcut" => Shortcuts.Any(s => s.Id == id),
+        "countdown" => Countdowns.Any(c => c.Id == id),
+        _ => false
+    };
+
     /// <summary>
     /// Whether autostart has ever been set up. Tracked separately from whether it is currently
     /// on, so switching it off in the tray sticks instead of being re-enabled at every launch.

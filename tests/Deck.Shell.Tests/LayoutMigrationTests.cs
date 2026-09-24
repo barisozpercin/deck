@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Deck.Shell.Config;
+using Deck.Shell.Countdowns;
 using Deck.Shell.Hotkeys;
 using Deck.Shell.Layout;
 using Deck.Shell.Presets;
@@ -113,5 +114,24 @@ public class LayoutMigrationTests
         Assert.Equal(config.Presets[0].Id, loaded.Presets[0].Id);
         Assert.Equal(config.Shortcuts[0].Id, loaded.Shortcuts[0].Id);
         Assert.False(LayoutMigration.Prepare(loaded));
+    }
+
+    [Fact]
+    public void Countdown_tiles_survive_validation_only_while_their_countdown_exists()
+    {
+        var config = ConfigWith(presets: 0, shortcuts: 0);
+        LayoutMigration.Prepare(config);
+        var trip = new Countdown { Label = "TRIP", Target = new DateTime(2026, 12, 12) };
+        config.Countdowns.Add(trip);
+        config.Layout.Add(new WidgetPlacement("countdown", "standard", trip.Id, 0, 2));
+
+        Assert.False(LayoutMigration.Prepare(config));
+        Assert.True(config.HasItem("countdown", trip.Id));
+
+        config.Countdowns.Clear();
+
+        Assert.True(LayoutMigration.Prepare(config));
+        Assert.DoesNotContain(config.Layout, p => p.Kind == "countdown");
+        Assert.False(config.HasItem("countdown", trip.Id));
     }
 }

@@ -56,8 +56,18 @@ internal static class WidgetCatalog
         ]),
         new("pomodoro", "Pomodoro", false, [Cell()]),
         new("stopwatch", "Stopwatch", false, [Cell()]),
+        new("dice", "Dice", false, [Cell()]),
+        new("agenda", "Agenda", false,
+        [
+            new(Standard, "1×1 · next event", 1, 1),
+            new("wide", "2×1 · next 3", 2, 1)
+        ]),
+        new("month", "Month", false, [new(Standard, "2×2", 2, 2)]),
+        new("network", "Network", false, [Cell()]),
+        new("display", "Display", false, [Cell()]),
         new("preset", "Preset", true, [Cell()]),
-        new("shortcut", "Shortcut", true, [Cell()])
+        new("shortcut", "Shortcut", true, [Cell()]),
+        new("countdown", "Countdown", true, [Cell()])
     ];
 
     public static WidgetKind? Find(string kind) => Kinds.FirstOrDefault(k => k.Id == kind);

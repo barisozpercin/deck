@@ -31,9 +31,7 @@ internal static class LayoutMigration
         }
 
         var layout = new DeckLayout(config.Layout);
-        int dropped = layout.Validate(
-            config.Presets.Select(p => p.Id).ToHashSet(StringComparer.Ordinal),
-            config.Shortcuts.Select(s => s.Id).ToHashSet(StringComparer.Ordinal));
+        int dropped = layout.Validate(config.HasItem);
 
         if (dropped > 0)
         {

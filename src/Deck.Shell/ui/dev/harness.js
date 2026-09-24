@@ -1,27 +1,29 @@
 (() => {
-  const SIZES = {
-    claude: { standard: [1, 1] },
-    weather: { standard: [1, 1], compact: [1, 1], hourly: [2, 1] },
-    nowplaying: { standard: [1, 1], wide: [2, 1] },
-    system: { standard: [1, 1] },
-    noise: { standard: [1, 1] },
-    mic: { standard: [1, 1] },
-    camera: { standard: [1, 1] },
-    clock: { standard: [1, 1] },
-    mixer: { tall: [2, 2], short: [2, 1] },
-    pomodoro: { standard: [1, 1] },
-    stopwatch: { standard: [1, 1] },
-    preset: { standard: [1, 1] },
-    shortcut: { standard: [1, 1] }
+  const CATALOG = {
+    claude: ['Claude', { standard: [1, 1, '1×1'] }],
+    weather: ['Weather', { standard: [1, 1, '1×1'], compact: [1, 1, '1×1 compact'], hourly: [2, 1, '2×1 · next hours'] }],
+    nowplaying: ['Now Playing', { standard: [1, 1, '1×1'], wide: [2, 1, '2×1 · art & controls'] }],
+    system: ['System', { standard: [1, 1, '1×1'] }],
+    noise: ['Noise', { standard: [1, 1, '1×1'] }],
+    mic: ['Mic', { standard: [1, 1, '1×1'] }],
+    camera: ['Camera', { standard: [1, 1, '1×1'] }],
+    clock: ['World Clock', { standard: [1, 1, '1×1'] }],
+    mixer: ['Mixer', { tall: [2, 2, '2×2 · 6 apps'], short: [2, 1, '2×1 · 3 apps'] }],
+    pomodoro: ['Pomodoro', { standard: [1, 1, '1×1'] }],
+    stopwatch: ['Stopwatch', { standard: [1, 1, '1×1'] }],
+    dice: ['Dice', { standard: [1, 1, '1×1'] }],
+    agenda: ['Agenda', { standard: [1, 1, '1×1 · next event'], wide: [2, 1, '2×1 · next 3'] }],
+    month: ['Month', { standard: [2, 2, '2×2'] }],
+    network: ['Network', { standard: [1, 1, '1×1'] }],
+    display: ['Display', { standard: [1, 1, '1×1'] }]
   };
-  const TITLES = {
-    claude: 'Claude', weather: 'Weather', nowplaying: 'Now Playing', system: 'System', noise: 'Noise',
-    mic: 'Mic', camera: 'Camera', clock: 'World Clock', mixer: 'Mixer', pomodoro: 'Pomodoro', stopwatch: 'Stopwatch'
-  };
-  const LABELS = {
-    standard: '1×1', compact: '1×1 compact', hourly: '2×1 · next hours',
-    wide: '2×1 · art & controls', tall: '2×2 · 6 apps', short: '2×1 · 3 apps'
-  };
+  const ITEMS = { preset: 'Preset', shortcut: 'Shortcut', countdown: 'Countdown' };
+  const SIZES = {};
+  for (const [kind, [, variants]] of Object.entries(CATALOG)) {
+    SIZES[kind] = {};
+    for (const [variant, [w, h]] of Object.entries(variants)) SIZES[kind][variant] = [w, h];
+  }
+  for (const kind of Object.keys(ITEMS)) SIZES[kind] = { standard: [1, 1] };
   const ART = 'data:image/svg+xml;utf8,' + encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#2b4a6b"/><circle cx="5" cy="5" r="3" fill="#7cc4ff"/></svg>');
 
@@ -95,9 +97,9 @@
 
   function sendLayout() {
     const placed = (kind, ref) => placements.some((p) => same(p, kind, ref));
-    const builtIns = Object.keys(TITLES).filter((k) => !placed(k, null)).map((k) => ({
-      kind: k, ref: null, title: TITLES[k], group: null,
-      variants: Object.entries(SIZES[k]).map(([variant, [w, h]]) => ({ variant, label: LABELS[variant], w, h }))
+    const builtIns = Object.entries(CATALOG).filter(([k]) => !placed(k, null)).map(([k, [title, variants]]) => ({
+      kind: k, ref: null, title, group: null,
+      variants: Object.entries(variants).map(([variant, [w, h, label]]) => ({ variant, label, w, h }))
     }));
     const items = presets.filter((p) => !placed('preset', p.id)).map((p) => ({
       kind: 'preset', ref: p.id, title: p.name, group: 'Preset',

@@ -161,7 +161,7 @@ public class DeckLayoutTests
             new WidgetPlacement("camera", Std, null, 0, 3)       // off the bottom
         });
 
-        int dropped = layout.Validate(new HashSet<string> { "kept" }, new HashSet<string>());
+        int dropped = layout.Validate((kind, id) => kind == "preset" && id == "kept");
 
         Assert.Equal(7, dropped);
         Assert.Equal(
@@ -180,5 +180,38 @@ public class DeckLayoutTests
         Assert.Equal(("noise", (string?)null), WidgetCatalog.OwnerOf("room"));
         Assert.Equal(("preset", (string?)"abc"), WidgetCatalog.OwnerOf("preset:abc"));
         Assert.Null(WidgetCatalog.OwnerOf("nonsense"));
+    }
+
+    [Fact]
+    public void Validate_asks_about_every_per_item_kind_including_countdowns()
+    {
+        var layout = new DeckLayout(new[]
+        {
+            new WidgetPlacement("countdown", Std, "trip", 0, 0),
+            new WidgetPlacement("countdown", Std, "gone", 1, 0),
+            new WidgetPlacement("shortcut", Std, "s1", 2, 0),
+            new WidgetPlacement("claude", Std, null, 3, 0)
+        });
+        var asked = new List<string>();
+
+        int dropped = layout.Validate((kind, id) =>
+        {
+            asked.Add(kind + ":" + id);
+            return id != "gone";
+        });
+
+        Assert.Equal(1, dropped);
+        Assert.Equal(new[] { "countdown:trip", "countdown:gone", "shortcut:s1" }, asked);
+    }
+
+    [Fact]
+    public void Agenda_and_month_can_both_be_on_the_deck()
+    {
+        var layout = new DeckLayout();
+
+        Assert.True(layout.Place("agenda", "wide", null, 0, 0));
+        Assert.True(layout.Place("month", Std, null, 2, 0));
+        Assert.Equal("month", layout.At(3, 1)?.Kind);
+        Assert.False(layout.CanPlace("month", Std, null, 5, 0));
     }
 }
