@@ -1,0 +1,8 @@
+/* --- display: the bar is brightness (drag), the rest of the tile is the tint switch (click).
+   Reuses the noise meter's .meter-wrap/.meter/.track/.fill shapes --- */
+.w-display .disp-level { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.w-display .meter .fill { background: var(--text); transition: none; }
+.tile.w-display.tint { background: #33270e; border-color: #6b5312; }
+.w-display.tint .label, .w-display.tint .disp-tint { color: var(--warn); }
+.w-display.tint .meter .fill { background: var(--warn); }
+.w-display.unavailable .disp-level { color: var(--dim); }

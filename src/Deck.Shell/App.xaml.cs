@@ -36,5 +36,16 @@ public partial class App : Application
         var release = ReleaseScreenSpace;
         ReleaseScreenSpace = null;   // idempotent: several exit paths can fire
         release?.Invoke();
+
+        // The reading tint lives in the display gamma ramps, which outlive the process; a crash
+        // must not leave every screen orange until the next reboot.
+        try
+        {
+            Deck.Shell.Display.GammaTint.Reset();
+        }
+        catch
+        {
+            // Nothing more can be done on the way down.
+        }
     }
 }
