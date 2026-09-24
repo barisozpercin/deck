@@ -55,9 +55,9 @@ internal sealed class CalendarService : SharedService, IDisposable
     /// <summary>Raised on the UI thread after every refresh, successful or not.</summary>
     public event Action? Updated;
 
-    /// <summary>"none" with no links, "offline" when nothing could be loaded at all, otherwise "ok".</summary>
+    /// <summary>"none" with no supported (https/webcal) link, "offline" when nothing could be loaded at all, otherwise "ok".</summary>
     public string Health =>
-        _config.CalendarLinks.Count == 0 ? "none"
+        !_config.CalendarLinks.Any(IsSupportedLink) ? "none"
         : _fetchedOnce && _entries.Count == 0 ? "offline"
         : "ok";
 
@@ -136,7 +136,7 @@ internal sealed class CalendarService : SharedService, IDisposable
 
         foreach (string link in links)
         {
-            if (!IsHttpsOrWebcal(link))
+            if (!IsSupportedLink(link))
             {
                 status.Add(new CalendarLinkStatus(link, false, "use an https link"));
                 continue;
@@ -145,9 +145,12 @@ internal sealed class CalendarService : SharedService, IDisposable
             try
             {
                 string ics = await _http.GetStringAsync(ToHttps(link));
-                var entries = await Task.Run(() => CalendarParser.Expand(ics, from, to));
+                var (entries, truncated) = await Task.Run(() => CalendarParser.Expand(ics, from, to));
                 _entries[link] = entries;
-                status.Add(new CalendarLinkStatus(link, true, $"OK · {entries.Count} upcoming"));
+
+                int upcoming = entries.Count(e => e.End > DateTime.Now);
+                string message = $"OK · {upcoming} upcoming" + (truncated ? " · some repeats skipped" : "");
+                status.Add(new CalendarLinkStatus(link, true, message));
             }
             catch (Exception ex)
             {
@@ -165,12 +168,18 @@ internal sealed class CalendarService : SharedService, IDisposable
         Updated?.Invoke();
     }
 
-    /// <summary>The horizon this refresh expands every link into; see the constants above for why.</summary>
-    private static (DateTime From, DateTime To) Horizon()
+    /// <summary>The horizon this refresh expands every link into; see the constants above for why. Exposed for tests.</summary>
+    internal static (DateTime From, DateTime To) Horizon()
     {
         var startOfThisMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
         var from = startOfThisMonth.AddMonths(-HorizonMonthsBack);
-        var to = startOfThisMonth.AddMonths(HorizonMonthsForward + 1).AddDays(-1);
+
+        // Exclusive: midnight at the start of the month after the horizon, so every moment of the
+        // horizon's own last calendar day is still inside it. A `to` of that day's own midnight
+        // (the old `.AddDays(-1)`) would drop every event on that day, since CalendarParser.Entries
+        // excludes anything starting at or after `to`.
+        var to = startOfThisMonth.AddMonths(HorizonMonthsForward + 1);
+
         return (from, to);
     }
 
@@ -179,7 +188,8 @@ internal sealed class CalendarService : SharedService, IDisposable
         link.StartsWith("webcal://", StringComparison.OrdinalIgnoreCase) ? "https://" + link["webcal://".Length..] : link;
 
     // https and webcal only: a hand-edited http:// link in config.json would send the secret in clear text.
-    private static bool IsHttpsOrWebcal(string link) =>
+    // Shared with CalendarWindow, which applies the same rule when saving a pasted link.
+    internal static bool IsSupportedLink(string link) =>
         Uri.TryCreate(link, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "webcal";
 
     private static string Describe(Exception ex) => ex switch

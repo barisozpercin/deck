@@ -239,7 +239,7 @@ public class CalendarParserTests
             """;
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        var entries = CalendarParser.Expand(ics, new DateTime(2026, 9, 1), new DateTime(2026, 10, 1));
+        var (entries, _) = CalendarParser.Expand(ics, new DateTime(2026, 9, 1), new DateTime(2026, 10, 1));
         stopwatch.Stop();
 
         Assert.DoesNotContain(entries, e => e.Title == "Chatty");
@@ -273,8 +273,135 @@ public class CalendarParserTests
             END:VCALENDAR
             """;
 
-        var entries = CalendarParser.Expand(ics, new DateTime(2026, 9, 23), new DateTime(2026, 9, 25));
+        var (entries, _) = CalendarParser.Expand(ics, new DateTime(2026, 9, 23), new DateTime(2026, 9, 25));
 
+        Assert.Contains(entries, e => e.Title == "Normal");
+    }
+
+    [Fact]
+    public void Prune_drops_rules_estimated_over_the_daily_limit_and_keeps_a_normal_event()
+    {
+        // Both rules pass a FREQ-only check (HOURLY, DAILY) but fire every minute once BYMINUTE
+        // (and, for the second, BYHOUR too) is taken into account — the estimate Prune now uses
+        // catches both, where the old FREQ-only check caught neither.
+        string allMinutes = string.Join(",", Enumerable.Range(0, 60));
+        string allHours = string.Join(",", Enumerable.Range(0, 24));
+
+        string ics = $"""
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:deck-tests
+            BEGIN:VEVENT
+            UID:chatty-hourly
+            DTSTART:20260101T000000Z
+            DTEND:20260101T000500Z
+            RRULE:FREQ=HOURLY;BYMINUTE={allMinutes}
+            SUMMARY:Chatty hourly
+            END:VEVENT
+            BEGIN:VEVENT
+            UID:chatty-daily
+            DTSTART:20260101T000000Z
+            DTEND:20260101T000500Z
+            RRULE:FREQ=DAILY;BYHOUR={allHours};BYMINUTE={allMinutes}
+            SUMMARY:Chatty daily
+            END:VEVENT
+            BEGIN:VEVENT
+            UID:normal-1
+            DTSTART:20260924T090000Z
+            DTEND:20260924T100000Z
+            SUMMARY:Normal
+            END:VEVENT
+            END:VCALENDAR
+            """;
+
+        var (entries, _) = CalendarParser.Expand(ics, new DateTime(2026, 9, 1), new DateTime(2026, 10, 1));
+
+        Assert.DoesNotContain(entries, e => e.Title == "Chatty hourly");
+        Assert.DoesNotContain(entries, e => e.Title == "Chatty daily");
+        Assert.Contains(entries, e => e.Title == "Normal");
+    }
+
+    [Fact]
+    public void Fifty_busy_daily_series_do_not_crowd_out_a_normal_event_near_the_horizons_end()
+    {
+        // A shared cap across the whole stream used to run out on an ordinary busy feed: fifty
+        // open-ended DAILY series easily add up to more than a single flat cap over a year-long
+        // horizon. The per-event cap (2000, comfortably above ~426 daily occurrences per series
+        // over this horizon) must not touch any of them, so nothing crowds out the normal event.
+        var (from, to) = CalendarService.Horizon();
+
+        var ics = new System.Text.StringBuilder()
+            .AppendLine("BEGIN:VCALENDAR")
+            .AppendLine("VERSION:2.0")
+            .AppendLine("PRODID:deck-tests");
+
+        for (int i = 0; i < 50; i++)
+        {
+            ics.AppendLine("BEGIN:VEVENT")
+                .AppendLine($"UID:series-{i}")
+                .AppendLine("DTSTART:20200101T090000Z")
+                .AppendLine("DTEND:20200101T093000Z")
+                .AppendLine("RRULE:FREQ=DAILY")
+                .AppendLine($"SUMMARY:Series {i}")
+                .AppendLine("END:VEVENT");
+        }
+
+        DateTime normalStart = to.AddDays(-3);
+        ics.AppendLine("BEGIN:VEVENT")
+            .AppendLine("UID:normal-near-end")
+            .AppendLine($"DTSTART:{normalStart:yyyyMMdd}T140000")
+            .AppendLine($"DTEND:{normalStart:yyyyMMdd}T150000")
+            .AppendLine("SUMMARY:Normal near end")
+            .AppendLine("END:VEVENT")
+            .AppendLine("END:VCALENDAR");
+
+        var (entries, truncated) = CalendarParser.Expand(ics.ToString(), from, to);
+
+        Assert.False(truncated);
+        Assert.Contains(entries, e => e.Title == "Normal near end");
+
+        DateTime lastWeekStart = to.AddDays(-7);
+        for (int i = 0; i < 50; i++)
+        {
+            string title = $"Series {i}";
+            Assert.Contains(entries, e => e.Title == title && e.Start >= lastWeekStart && e.Start < to);
+        }
+    }
+
+    [Fact]
+    public void An_open_ended_hourly_event_is_capped_per_event_and_marked_truncated()
+    {
+        // A bare FREQ=HOURLY (no BYHOUR/BYMINUTE) estimates at 24/day, under Prune's 48/day limit,
+        // so it survives pruning; over a long enough window it must instead be stopped by the
+        // per-event cap, and that must be reported as a truncation.
+        const string ics = """
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:deck-tests
+            BEGIN:VEVENT
+            UID:hourly-forever
+            DTSTART:20200101T000000Z
+            DTEND:20200101T003000Z
+            RRULE:FREQ=HOURLY
+            SUMMARY:Hourly forever
+            END:VEVENT
+            BEGIN:VEVENT
+            UID:normal-1
+            DTSTART:20260924T090000Z
+            DTEND:20260924T100000Z
+            SUMMARY:Normal
+            END:VEVENT
+            END:VCALENDAR
+            """;
+
+        var (entries, truncated) = CalendarParser.Expand(ics, new DateTime(2026, 1, 1), new DateTime(2026, 10, 1));
+
+        Assert.True(truncated);
+
+        // Not exactly 2000: a day's worth of occurrences before fromLocal are also evaluated (see
+        // the "day early" comment in Entries) and spend the per-event budget before being filtered
+        // back out here, so the visible count is the cap minus that day's worth.
+        Assert.InRange(entries.Count(e => e.Title == "Hourly forever"), 1900, 2000);
         Assert.Contains(entries, e => e.Title == "Normal");
     }
 }

@@ -12,11 +12,26 @@ namespace Deck.Shell.Calendars;
 internal static class CalendarParser
 {
     /// <summary>
-    /// A stop for a malformed rule that would otherwise repeat forever. Expansion now covers a
-    /// fixed horizon with its own early stop (see <see cref="Bounded"/>), so in the normal case
-    /// this cap is never reached; it only guards a runaway feed.
+    /// The last-resort stop for a runaway feed, once <see cref="Prune"/> and the per-event cap
+    /// (<see cref="MaxOccurrencesPerEvent"/>) have already done their work — e.g. hundreds of
+    /// distinct events each just under their own cap. In the normal case this is never reached.
     /// </summary>
-    private const int MaxOccurrences = 20000;
+    private const int MaxOccurrences = 200000;
+
+    /// <summary>
+    /// One event's share of <see cref="MaxOccurrences"/>. Without a per-event cap, a single event
+    /// that slips past <see cref="Prune"/> — or simply repeats often enough for long enough — can
+    /// fill the whole overall cap by itself and crowd out every other event sharing it.
+    /// </summary>
+    private const int MaxOccurrencesPerEvent = 2000;
+
+    /// <summary>
+    /// No real meeting series fires more than once every 30 minutes. <see cref="Prune"/> uses this
+    /// to drop a rule that would, whether or not its FREQ alone looks pathological — e.g.
+    /// FREQ=HOURLY;BYMINUTE=0,1,...,59 or FREQ=DAILY;BYHOUR=0..23;BYMINUTE=0..59 both pass a
+    /// FREQ-only check but would still fill the occurrence caps with noise instead of real events.
+    /// </summary>
+    private const int MaxEstimatedOccurrencesPerDay = 48;
 
     /// <summary>
     /// A rule that can never match (e.g. FREQ=HOURLY;BYMONTH=2;BYMONTHDAY=30 — February never has
@@ -32,32 +47,60 @@ internal static class CalendarParser
     /// <summary>
     /// The whole pipeline for one refresh: load, drop pathological rules, then expand — all on a
     /// calendar instance nobody else has seen yet, so pruning and the never-matching-rule retry in
-    /// <see cref="SafeOccurrences"/> are free to mutate it.
+    /// <see cref="SafeOccurrences"/> are free to mutate it. <c>Truncated</c> says whether the
+    /// per-event or overall occurrence cap dropped anything, so the service can say so in the
+    /// link's status instead of truncating silently.
     /// </summary>
-    public static List<CalendarEntry> Expand(string ics, DateTime fromLocal, DateTime toLocal)
+    public static (List<CalendarEntry> Entries, bool Truncated) Expand(string ics, DateTime fromLocal, DateTime toLocal)
     {
         var calendar = Load(ics);
         Prune(calendar);
-        return Entries(calendar, fromLocal, toLocal);
+        var entries = Entries(calendar, fromLocal, toLocal, out bool truncated);
+        return (entries, truncated);
     }
 
     /// <summary>
-    /// Calendar apps don't create SECONDLY or MINUTELY repeats for real meetings; a feed that does
-    /// (malformed, or a runaway export) would otherwise spend the occurrence cap on noise instead
-    /// of real events, crowding them out. Dropping these before expansion keeps the cap meaningful.
+    /// Calendar apps don't create SECONDLY or MINUTELY repeats for real meetings, and nothing
+    /// legitimate fires more than <see cref="MaxEstimatedOccurrencesPerDay"/> times a day either —
+    /// a feed that does (malformed, or a runaway export) would otherwise spend the occurrence caps
+    /// on noise instead of real events, crowding them out. Dropping these before expansion keeps
+    /// the caps meaningful.
     /// </summary>
     private static void Prune(IcalCalendar calendar)
     {
         foreach (var ev in calendar.Events.ToList())
         {
-            if (ev.RecurrenceRule is { Frequency: Ical.Net.FrequencyType.Secondly or Ical.Net.FrequencyType.Minutely })
+            if (ev.RecurrenceRule is { } rule && EstimatedOccurrencesPerDay(rule) > MaxEstimatedOccurrencesPerDay)
             {
                 calendar.Events.Remove(ev);
             }
         }
     }
 
-    public static List<CalendarEntry> Entries(IcalCalendar calendar, DateTime fromLocal, DateTime toLocal)
+    /// <summary>
+    /// A rough upper bound, not an exact count — enough to tell a plausible meeting series from a
+    /// rule that fires far too often, without evaluating it. SECONDLY and MINUTELY are always over
+    /// the limit. For HOURLY, the BYHOUR list (when present) says how many hours a day it can fire
+    /// in, else all 24; for DAILY and coarser, the same list says how many hours a day, else just 1
+    /// (the rule's own start time). Either way, BYMINUTE and BYSECOND (when present) multiply that
+    /// further, since each is another firing within the hour.
+    /// </summary>
+    private static double EstimatedOccurrencesPerDay(RecurrenceRule rule)
+    {
+        if (rule.Frequency is Ical.Net.FrequencyType.Secondly or Ical.Net.FrequencyType.Minutely) return double.MaxValue;
+
+        int hoursPerDay = rule.ByHour.Count > 0
+            ? rule.ByHour.Count
+            : rule.Frequency == Ical.Net.FrequencyType.Hourly ? 24 : 1;
+
+        return (double)hoursPerDay * Math.Max(1, rule.ByMinute.Count) * Math.Max(1, rule.BySecond.Count);
+    }
+
+    public static List<CalendarEntry> Entries(IcalCalendar calendar, DateTime fromLocal, DateTime toLocal) =>
+        Entries(calendar, fromLocal, toLocal, out _);
+
+    /// <summary>As above, but also says whether the per-event or overall occurrence cap dropped anything.</summary>
+    public static List<CalendarEntry> Entries(IcalCalendar calendar, DateTime fromLocal, DateTime toLocal, out bool truncated)
     {
         // A day early, so a meeting already in progress at fromLocal is still found.
         var start = new CalDateTime(fromLocal.AddDays(-1).ToUniversalTime(), CalDateTime.UtcTzId);
@@ -68,7 +111,7 @@ internal static class CalendarParser
 
         var entries = new List<CalendarEntry>();
 
-        foreach (var occurrence in SafeOccurrences(calendar, start, stopUtc))
+        foreach (var occurrence in SafeOccurrences(calendar, start, stopUtc, out truncated))
         {
             var period = occurrence.Period;
             if (occurrence.Source is not CalendarEvent ev) continue;
@@ -108,11 +151,11 @@ internal static class CalendarParser
     /// out — not just its own. If that happens, find whichever event is responsible and retry
     /// without it, so a bad rule costs only its own event.
     /// </summary>
-    private static List<Occurrence> SafeOccurrences(IcalCalendar calendar, CalDateTime start, DateTime stopUtc)
+    private static List<Occurrence> SafeOccurrences(IcalCalendar calendar, CalDateTime start, DateTime stopUtc, out bool truncated)
     {
         try
         {
-            return Bounded(calendar.GetOccurrences<CalendarEvent>(start, Options), stopUtc);
+            return Bounded(calendar.GetOccurrences<CalendarEvent>(start, Options), stopUtc, out truncated);
         }
         catch (EvaluationException)
         {
@@ -120,7 +163,7 @@ internal static class CalendarParser
             {
                 try
                 {
-                    Bounded(ev.GetOccurrences(start, Options), stopUtc);
+                    Bounded(ev.GetOccurrences(start, Options), stopUtc, out _);
                 }
                 catch (EvaluationException)
                 {
@@ -130,22 +173,47 @@ internal static class CalendarParser
 
             try
             {
-                return Bounded(calendar.GetOccurrences<CalendarEvent>(start, Options), stopUtc);
+                return Bounded(calendar.GetOccurrences<CalendarEvent>(start, Options), stopUtc, out truncated);
             }
             catch (EvaluationException)
             {
+                truncated = false;
                 return [];
             }
         }
     }
 
-    /// <summary>Applies both the hard occurrence cap and the window's early stop while materialising.</summary>
-    private static List<Occurrence> Bounded(IEnumerable<Occurrence> occurrences, DateTime stopUtc)
+    /// <summary>
+    /// Applies the per-event cap, the overall backstop cap, and the window's early stop while
+    /// materialising. The per-event cap only stops adding that event's own further occurrences —
+    /// enumeration carries on so every other event still gets its share. <c>truncated</c> is set
+    /// if either cap dropped anything.
+    /// </summary>
+    private static List<Occurrence> Bounded(IEnumerable<Occurrence> occurrences, DateTime stopUtc, out bool truncated)
     {
         var list = new List<Occurrence>();
-        foreach (var occurrence in occurrences.Take(MaxOccurrences))
+        var perEvent = new Dictionary<object, int>(ReferenceEqualityComparer.Instance);
+        truncated = false;
+
+        foreach (var occurrence in occurrences)
         {
             if (occurrence.Period.StartTime.AsUtc > stopUtc) break;
+
+            if (list.Count >= MaxOccurrences)
+            {
+                truncated = true;
+                break;
+            }
+
+            object source = occurrence.Source;
+            int countSoFar = perEvent.TryGetValue(source, out int n) ? n : 0;
+            if (countSoFar >= MaxOccurrencesPerEvent)
+            {
+                truncated = true;
+                continue;
+            }
+
+            perEvent[source] = countSoFar + 1;
             list.Add(occurrence);
         }
 

@@ -121,7 +121,7 @@ public partial class CalendarWindow : Window
 
         _config.CalendarLinks = (lines ?? [])
             .Select(l => l.Trim())
-            .Where(IsLink)
+            .Where(CalendarService.IsSupportedLink)
             .Distinct(StringComparer.Ordinal)
             .ToList();
         _config.Save();
@@ -131,9 +131,4 @@ public partial class CalendarWindow : Window
         SendState();
         _ = _calendar.RefreshAsync();
     }
-
-    // https and webcal only: http would send the secret link in clear text.
-    private static bool IsLink(string line) =>
-        Uri.TryCreate(line, UriKind.Absolute, out var uri)
-        && uri.Scheme is "https" or "webcal";
 }
