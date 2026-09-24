@@ -5,8 +5,6 @@ using System.Text;
 using System.Windows.Threading;
 using Deck.Shell.Config;
 using Deck.Shell.Widgets;
-using Ical.Net.Evaluation;
-using IcalCalendar = Ical.Net.Calendar;
 
 namespace Deck.Shell.Calendars;
 
@@ -14,17 +12,28 @@ internal sealed record CalendarLinkStatus(string Link, bool Ok, string Message);
 
 /// <summary>
 /// The calendar behind Agenda and Month. While either is on the deck it fetches every link every
-/// 10 minutes. A link that fails keeps its last good calendar, so a flaky connection shows
-/// slightly old events rather than none.
+/// 10 minutes, expanding each into entries for the fixed horizon right there, off the UI thread.
+/// A link that fails keeps its last good entries, so a flaky connection shows slightly old events
+/// rather than none.
 /// </summary>
 internal sealed class CalendarService : SharedService, IDisposable
 {
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(10);
 
+    /// <summary>
+    /// The fixed window every refresh expands into. Month can page back and forward up to a year
+    /// from today; Agenda only needs the next 7 days, comfortably inside it. Expanding once per
+    /// refresh, for this whole span, is what lets <see cref="Entries"/> be a cheap filter on the
+    /// UI thread instead of an Ical.Net call.
+    /// </summary>
+    private const int HorizonMonthsBack = 2;
+
+    private const int HorizonMonthsForward = 12;
+
     private readonly DeckConfig _config;
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(20) };
     private readonly DispatcherTimer _timer = new() { Interval = Interval };
-    private readonly Dictionary<string, IcalCalendar> _calendars = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IReadOnlyList<CalendarEntry>> _entries = new(StringComparer.Ordinal);
     private bool _refreshing;
     private bool _refreshAgain;
     private bool _fetchedOnce;
@@ -49,7 +58,7 @@ internal sealed class CalendarService : SharedService, IDisposable
     /// <summary>"none" with no links, "offline" when nothing could be loaded at all, otherwise "ok".</summary>
     public string Health =>
         _config.CalendarLinks.Count == 0 ? "none"
-        : _fetchedOnce && _calendars.Count == 0 ? "offline"
+        : _fetchedOnce && _entries.Count == 0 ? "offline"
         : "ok";
 
     protected override void OnStart()
@@ -85,20 +94,14 @@ internal sealed class CalendarService : SharedService, IDisposable
         }
     }
 
+    /// <summary>A cheap filter over each link's already-expanded entries — no Ical.Net call on this (the UI) thread.</summary>
     public List<CalendarEntry> Entries(DateTime fromLocal, DateTime toLocal)
     {
         var entries = new List<CalendarEntry>();
 
-        foreach (var calendar in _calendars.Values)
+        foreach (var list in _entries.Values)
         {
-            try
-            {
-                entries.AddRange(CalendarParser.Entries(calendar, fromLocal, toLocal));
-            }
-            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or FormatException or EvaluationException)
-            {
-                // A rule Ical.Net can't evaluate spoils only its own calendar's answer.
-            }
+            entries.AddRange(list.Where(e => e.Start < toLocal && e.End > fromLocal));
         }
 
         return entries.OrderBy(e => e.Start).ToList();
@@ -129,15 +132,22 @@ internal sealed class CalendarService : SharedService, IDisposable
         int pass = ++Started;
         var links = _config.CalendarLinks.ToList();
         var status = new List<CalendarLinkStatus>();
+        var (from, to) = Horizon();
 
         foreach (string link in links)
         {
+            if (!IsHttpsOrWebcal(link))
+            {
+                status.Add(new CalendarLinkStatus(link, false, "use an https link"));
+                continue;
+            }
+
             try
             {
                 string ics = await _http.GetStringAsync(ToHttps(link));
-                var calendar = await Task.Run(() => CalendarParser.Load(ics));
-                _calendars[link] = calendar;
-                status.Add(new CalendarLinkStatus(link, true, $"OK · {calendar.Events.Count} events"));
+                var entries = await Task.Run(() => CalendarParser.Expand(ics, from, to));
+                _entries[link] = entries;
+                status.Add(new CalendarLinkStatus(link, true, $"OK · {entries.Count} upcoming"));
             }
             catch (Exception ex)
             {
@@ -147,7 +157,7 @@ internal sealed class CalendarService : SharedService, IDisposable
             }
         }
 
-        foreach (string gone in _calendars.Keys.Except(links).ToList()) _calendars.Remove(gone);
+        foreach (string gone in _entries.Keys.Except(links).ToList()) _entries.Remove(gone);
 
         Status = status;
         _fetchedOnce = true;
@@ -155,9 +165,22 @@ internal sealed class CalendarService : SharedService, IDisposable
         Updated?.Invoke();
     }
 
+    /// <summary>The horizon this refresh expands every link into; see the constants above for why.</summary>
+    private static (DateTime From, DateTime To) Horizon()
+    {
+        var startOfThisMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        var from = startOfThisMonth.AddMonths(-HorizonMonthsBack);
+        var to = startOfThisMonth.AddMonths(HorizonMonthsForward + 1).AddDays(-1);
+        return (from, to);
+    }
+
     /// <summary>Calendar apps hand out webcal:// links; they're plain https underneath.</summary>
     private static string ToHttps(string link) =>
         link.StartsWith("webcal://", StringComparison.OrdinalIgnoreCase) ? "https://" + link["webcal://".Length..] : link;
+
+    // https and webcal only: a hand-edited http:// link in config.json would send the secret in clear text.
+    private static bool IsHttpsOrWebcal(string link) =>
+        Uri.TryCreate(link, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "webcal";
 
     private static string Describe(Exception ex) => ex switch
     {

@@ -31,8 +31,10 @@ public partial class CalendarWindow : Window
             _calendar.Updated -= OnUpdated;
         };
 
-        // So status appears even when no calendar widget is on the deck to have started a refresh.
-        if (_config.CalendarLinks.Count > 0 && _calendar.Status.Count == 0)
+        // Always refresh on open when there are links, not just when nothing has fetched yet: the
+        // cached entries can be up to 10 minutes stale, and showing "checking" while a fresh pass
+        // runs beats silently displaying that stale status as if it were current.
+        if (_config.CalendarLinks.Count > 0)
         {
             _checking = true;
             _waitFor = _calendar.Started + 1;

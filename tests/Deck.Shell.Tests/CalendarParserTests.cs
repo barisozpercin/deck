@@ -166,7 +166,8 @@ public class CalendarParserTests
     public void An_all_day_event_just_inside_the_window_end_is_returned()
     {
         // Window ends an hour after local midnight on the event's day, not at the end of that day:
-        // this guards the one-day slack before the early-stop in CalendarParser.Entries.
+        // this guards the one-day slack before the early-stop in CalendarParser.Entries. It only
+        // discriminates on UTC+ machines, which is this desk's; on UTC- it would pass either way.
         const string ics = """
             BEGIN:VCALENDAR
             VERSION:2.0
@@ -206,9 +207,74 @@ public class CalendarParserTests
         var calendar = CalendarParser.Load(ics);
 
         // fromLocal lands 6 hours into a 16-hour meeting: it began before the window opened but
-        // is still running when it does. This guards the day-early start in CalendarParser.Entries.
+        // is still running when it does. This guards that an in-progress meeting is returned.
         var entries = CalendarParser.Entries(calendar, Local(9, 24, 12), Local(9, 24, 18));
 
         Assert.Contains(entries, e => e.Title == "Long call");
+    }
+
+    [Fact]
+    public void Expand_drops_a_minutely_event_and_still_returns_a_normal_one_quickly()
+    {
+        // FREQ=MINUTELY from 2000 would cost seconds to expand if Ical.Net had to iterate it; a
+        // real calendar app never emits a repeat this chatty, so Expand prunes it before expanding.
+        const string ics = """
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:deck-tests
+            BEGIN:VEVENT
+            UID:minutely-1
+            DTSTART:20000101T090000Z
+            DTEND:20000101T091000Z
+            RRULE:FREQ=MINUTELY
+            SUMMARY:Chatty
+            END:VEVENT
+            BEGIN:VEVENT
+            UID:normal-1
+            DTSTART:20260924T090000Z
+            DTEND:20260924T100000Z
+            SUMMARY:Normal
+            END:VEVENT
+            END:VCALENDAR
+            """;
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var entries = CalendarParser.Expand(ics, new DateTime(2026, 9, 1), new DateTime(2026, 10, 1));
+        stopwatch.Stop();
+
+        Assert.DoesNotContain(entries, e => e.Title == "Chatty");
+        Assert.Contains(entries, e => e.Title == "Normal");
+        Assert.True(stopwatch.ElapsedMilliseconds < 3000, $"took {stopwatch.ElapsedMilliseconds}ms");
+    }
+
+    [Fact]
+    public void Expand_on_a_feed_with_a_never_matching_rule_returns_the_other_events()
+    {
+        // FREQ=HOURLY;BYMONTH=2;BYMONTHDAY=30 never matches (February never has a 30th); Expand's
+        // load step goes through the same detect-and-retry as CalendarParser.Entries, but now on a
+        // calendar instance nobody else has seen yet.
+        const string ics = """
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:deck-tests
+            BEGIN:VEVENT
+            UID:never-1
+            DTSTART:20260101T090000Z
+            DTEND:20260101T100000Z
+            RRULE:FREQ=HOURLY;BYMONTH=2;BYMONTHDAY=30
+            SUMMARY:Never
+            END:VEVENT
+            BEGIN:VEVENT
+            UID:normal-1
+            DTSTART:20260924T090000Z
+            DTEND:20260924T100000Z
+            SUMMARY:Normal
+            END:VEVENT
+            END:VCALENDAR
+            """;
+
+        var entries = CalendarParser.Expand(ics, new DateTime(2026, 9, 23), new DateTime(2026, 9, 25));
+
+        Assert.Contains(entries, e => e.Title == "Normal");
     }
 }

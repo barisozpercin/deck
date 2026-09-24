@@ -11,8 +11,12 @@ namespace Deck.Shell.Calendars;
 /// </summary>
 internal static class CalendarParser
 {
-    /// <summary>A stop for a malformed rule that would otherwise repeat forever.</summary>
-    private const int MaxOccurrences = 5000;
+    /// <summary>
+    /// A stop for a malformed rule that would otherwise repeat forever. Expansion now covers a
+    /// fixed horizon with its own early stop (see <see cref="Bounded"/>), so in the normal case
+    /// this cap is never reached; it only guards a runaway feed.
+    /// </summary>
+    private const int MaxOccurrences = 20000;
 
     /// <summary>
     /// A rule that can never match (e.g. FREQ=HOURLY;BYMONTH=2;BYMONTHDAY=30 — February never has
@@ -24,6 +28,34 @@ internal static class CalendarParser
     /// <summary>Throws on text that isn't iCal (a login page, an error page); the service turns that into the link's status.</summary>
     public static IcalCalendar Load(string ics) =>
         IcalCalendar.Load(ics) ?? throw new FormatException("not an iCal calendar");
+
+    /// <summary>
+    /// The whole pipeline for one refresh: load, drop pathological rules, then expand — all on a
+    /// calendar instance nobody else has seen yet, so pruning and the never-matching-rule retry in
+    /// <see cref="SafeOccurrences"/> are free to mutate it.
+    /// </summary>
+    public static List<CalendarEntry> Expand(string ics, DateTime fromLocal, DateTime toLocal)
+    {
+        var calendar = Load(ics);
+        Prune(calendar);
+        return Entries(calendar, fromLocal, toLocal);
+    }
+
+    /// <summary>
+    /// Calendar apps don't create SECONDLY or MINUTELY repeats for real meetings; a feed that does
+    /// (malformed, or a runaway export) would otherwise spend the occurrence cap on noise instead
+    /// of real events, crowding them out. Dropping these before expansion keeps the cap meaningful.
+    /// </summary>
+    private static void Prune(IcalCalendar calendar)
+    {
+        foreach (var ev in calendar.Events.ToList())
+        {
+            if (ev.RecurrenceRule is { Frequency: Ical.Net.FrequencyType.Secondly or Ical.Net.FrequencyType.Minutely })
+            {
+                calendar.Events.Remove(ev);
+            }
+        }
+    }
 
     public static List<CalendarEntry> Entries(IcalCalendar calendar, DateTime fromLocal, DateTime toLocal)
     {
