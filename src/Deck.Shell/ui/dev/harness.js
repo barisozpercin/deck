@@ -13,7 +13,7 @@
     stopwatch: ['Stopwatch', { standard: [1, 1, '1×1'] }],
     dice: ['Dice', { standard: [1, 1, '1×1'] }],
     agenda: ['Agenda', { standard: [1, 1, '1×1 · next event'], wide: [2, 1, '2×1 · next 3'] }],
-    month: ['Month', { standard: [2, 2, '2×2'] }],
+    month: ['Month', { standard: [2, 2, '2×2'], compact: [1, 1, '1×1 mini'] }],
     network: ['Network', { standard: [1, 1, '1×1'] }],
     display: ['Display', { standard: [1, 1, '1×1'] }]
   };

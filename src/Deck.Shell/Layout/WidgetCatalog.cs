@@ -62,7 +62,11 @@ internal static class WidgetCatalog
             new(Standard, "1×1 · next event", 1, 1),
             new("wide", "2×1 · next 3", 2, 1)
         ]),
-        new("month", "Month", false, [new(Standard, "2×2", 2, 2)]),
+        new("month", "Month", false,
+        [
+            new(Standard, "2×2", 2, 2),
+            new("compact", "1×1 mini", 1, 1)
+        ]),
         new("network", "Network", false, [Cell()]),
         new("display", "Display", false, [Cell()]),
         new("preset", "Preset", true, [Cell()]),

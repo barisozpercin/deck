@@ -214,4 +214,14 @@ public class DeckLayoutTests
         Assert.Equal("month", layout.At(3, 1)?.Kind);
         Assert.False(layout.CanPlace("month", Std, null, 5, 0));
     }
+
+    [Fact]
+    public void The_mini_month_fits_in_a_single_cell()
+    {
+        var layout = new DeckLayout();
+
+        Assert.True(layout.Place("month", "compact", null, 5, 0));
+        Assert.Equal("month", layout.At(5, 0)?.Kind);
+        Assert.Null(layout.At(5, 1));
+    }
 }

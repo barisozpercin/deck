@@ -44,3 +44,15 @@
   background: var(--warn);
 }
 .w-month .mo-hint:empty { display: none; }
+
+/* --- month 1x1: the same grid, shrunk to one cell. No room for paging, so it always shows this
+   month; the 2x2 is the one to flip through --- */
+.tile.w-month.v-compact { padding: 8px 8px 6px; gap: 3px; }
+.w-month.v-compact .mo-head { justify-content: center; }
+.w-month.v-compact .mo-title { font-size: 10.5px; padding: 0; cursor: default; }
+.w-month.v-compact .mo-title:hover { background: none; }
+.w-month.v-compact .mo-grid { gap: 0; }
+.w-month.v-compact .mo-dow { font-size: 7.5px; }
+.w-month.v-compact .mo-day { font-size: 9.5px; border-radius: 4px; }
+.w-month.v-compact .mo-day.has::after { width: 3px; height: 3px; bottom: 0; }
+.w-month.v-compact .mo-hint { display: none; }

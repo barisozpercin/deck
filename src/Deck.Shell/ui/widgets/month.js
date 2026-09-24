@@ -1,9 +1,10 @@
 Widgets.month = {
-  template: () => `
-    <div class="mo-head">
-      <button class="mo-btn" data-msg="prev" title="Previous month">‹</button>
+  template: (variant) => `
+    <div class="mo-head">${variant === 'compact'
+      ? '<span class="mo-title"></span>'
+      : `<button class="mo-btn" data-msg="prev" title="Previous month">‹</button>
       <button class="mo-title" data-msg="today" title="Back to this month"></button>
-      <button class="mo-btn" data-msg="next" title="Next month">›</button>
+      <button class="mo-btn" data-msg="next" title="Next month">›</button>`}
     </div>
     <div class="mo-grid">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d) => `<span class="mo-dow">${d}</span>`).join('')}</div>
     <div class="device mo-hint"></div>`,
