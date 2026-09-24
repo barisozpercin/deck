@@ -1,5 +1,6 @@
 using Ical.Net.CalendarComponents;
 using Ical.Net.DataTypes;
+using Ical.Net.Evaluation;
 using IcalCalendar = Ical.Net.Calendar;
 
 namespace Deck.Shell.Calendars;
@@ -12,6 +13,13 @@ internal static class CalendarParser
 {
     /// <summary>A stop for a malformed rule that would otherwise repeat forever.</summary>
     private const int MaxOccurrences = 5000;
+
+    /// <summary>
+    /// A rule that can never match (e.g. FREQ=HOURLY;BYMONTH=2;BYMONTHDAY=30 — February never has
+    /// a 30th) would otherwise have Ical.Net search for a match without end. Capping the number of
+    /// unmatched attempts makes it fail fast instead of freezing the deck.
+    /// </summary>
+    private static readonly EvaluationOptions Options = new() { MaxUnmatchedIncrementsLimit = 1000 };
 
     /// <summary>Throws on text that isn't iCal (a login page, an error page); the service turns that into the link's status.</summary>
     public static IcalCalendar Load(string ics) =>
@@ -28,17 +36,16 @@ internal static class CalendarParser
 
         var entries = new List<CalendarEntry>();
 
-        foreach (var occurrence in calendar.GetOccurrences<CalendarEvent>(start, null).Take(MaxOccurrences))
+        foreach (var occurrence in SafeOccurrences(calendar, start, stopUtc))
         {
             var period = occurrence.Period;
-            if (period.StartTime.AsUtc > stopUtc) break;
             if (occurrence.Source is not CalendarEvent ev) continue;
 
             bool allDay = ev.IsAllDay || !period.StartTime.HasTime;
             var endTime = period.EffectiveEndTime ?? period.StartTime;
 
-            DateTime begin = allDay ? period.StartTime.Date.ToDateTime(TimeOnly.MinValue) : period.StartTime.AsUtc.ToLocalTime();
-            DateTime end = allDay ? endTime.Date.ToDateTime(TimeOnly.MinValue) : endTime.AsUtc.ToLocalTime();
+            DateTime begin = allDay ? period.StartTime.Date.ToDateTime(TimeOnly.MinValue) : ToLocal(period.StartTime);
+            DateTime end = allDay ? endTime.Date.ToDateTime(TimeOnly.MinValue) : ToLocal(endTime);
             if (allDay && end <= begin) end = begin.AddDays(1);
 
             if (begin >= toLocal || end <= fromLocal) continue;
@@ -54,5 +61,62 @@ internal static class CalendarParser
         }
 
         return entries.OrderBy(e => e.Start).ToList();
+    }
+
+    /// <summary>
+    /// RFC 5545: a DTSTART/DTEND with no Z and no TZID is local wall-clock time, not UTC. Ical.Net
+    /// 5 reads it as UTC regardless, so a floating time has to bypass AsUtc entirely.
+    /// </summary>
+    private static DateTime ToLocal(CalDateTime time) =>
+        time.IsFloating ? DateTime.SpecifyKind(time.Value, DateTimeKind.Local) : time.AsUtc.ToLocalTime();
+
+    /// <summary>
+    /// Ical.Net evaluates every event in a calendar together before yielding the first occurrence,
+    /// so one event's rule that can never match throws before any other event's occurrences come
+    /// out — not just its own. If that happens, find whichever event is responsible and retry
+    /// without it, so a bad rule costs only its own event.
+    /// </summary>
+    private static List<Occurrence> SafeOccurrences(IcalCalendar calendar, CalDateTime start, DateTime stopUtc)
+    {
+        try
+        {
+            return Bounded(calendar.GetOccurrences<CalendarEvent>(start, Options), stopUtc);
+        }
+        catch (EvaluationException)
+        {
+            foreach (var ev in calendar.Events.ToList())
+            {
+                try
+                {
+                    Bounded(ev.GetOccurrences(start, Options), stopUtc);
+                }
+                catch (EvaluationException)
+                {
+                    calendar.Events.Remove(ev);
+                }
+            }
+
+            try
+            {
+                return Bounded(calendar.GetOccurrences<CalendarEvent>(start, Options), stopUtc);
+            }
+            catch (EvaluationException)
+            {
+                return [];
+            }
+        }
+    }
+
+    /// <summary>Applies both the hard occurrence cap and the window's early stop while materialising.</summary>
+    private static List<Occurrence> Bounded(IEnumerable<Occurrence> occurrences, DateTime stopUtc)
+    {
+        var list = new List<Occurrence>();
+        foreach (var occurrence in occurrences.Take(MaxOccurrences))
+        {
+            if (occurrence.Period.StartTime.AsUtc > stopUtc) break;
+            list.Add(occurrence);
+        }
+
+        return list;
     }
 }

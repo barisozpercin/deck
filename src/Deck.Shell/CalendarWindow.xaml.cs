@@ -16,14 +16,30 @@ public partial class CalendarWindow : Window
     private readonly DeckConfig _config;
     private readonly CalendarService _calendar;
     private bool _checking;
+    private int _waitFor;
+    private bool _closed;
 
     internal CalendarWindow(DeckConfig config, CalendarService calendar)
     {
         InitializeComponent();
         _config = config;
         _calendar = calendar;
+        _calendar.Updated += OnUpdated;
+        Closed += (_, _) =>
+        {
+            _closed = true;
+            _calendar.Updated -= OnUpdated;
+        };
+
+        // So status appears even when no calendar widget is on the deck to have started a refresh.
+        if (_config.CalendarLinks.Count > 0 && _calendar.Status.Count == 0)
+        {
+            _checking = true;
+            _waitFor = _calendar.Started + 1;
+            _ = _calendar.RefreshAsync();
+        }
+
         Loaded += OnLoaded;
-        Closed += (_, _) => _calendar.Updated -= OnUpdated;
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -41,7 +57,6 @@ public partial class CalendarWindow : Window
             Web.CoreWebView2.Settings.IsStatusBarEnabled = false;
             Web.CoreWebView2.WebMessageReceived += OnWebMessage;
             Web.CoreWebView2.NavigationCompleted += (_, _) => SendState();
-            _calendar.Updated += OnUpdated;
 
             string path = Path.Combine(AppContext.BaseDirectory, "ui", "calendar.html");
             Web.CoreWebView2.NavigateToString(File.ReadAllText(path));
@@ -55,13 +70,18 @@ public partial class CalendarWindow : Window
 
     private void OnUpdated()
     {
-        _checking = false;
+        if (_closed) return;
+
+        // A refresh already in flight when Save happened read the old links, so its completion
+        // doesn't count; only a pass that started after Save (or later) does.
+        if (_calendar.Completed >= _waitFor) _checking = false;
+
         SendState();
     }
 
     private void SendState()
     {
-        if (Web.CoreWebView2 is null) return;
+        if (_closed || Web.CoreWebView2 is null) return;
 
         Web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
         {
@@ -105,11 +125,13 @@ public partial class CalendarWindow : Window
         _config.Save();
 
         _checking = true;
+        _waitFor = _calendar.Started + 1;
         SendState();
         _ = _calendar.RefreshAsync();
     }
 
+    // https and webcal only: http would send the secret link in clear text.
     private static bool IsLink(string line) =>
         Uri.TryCreate(line, UriKind.Absolute, out var uri)
-        && uri.Scheme is "https" or "http" or "webcal";
+        && uri.Scheme is "https" or "webcal";
 }

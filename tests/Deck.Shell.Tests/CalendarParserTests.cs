@@ -92,9 +92,123 @@ public class CalendarParserTests
     [Fact]
     public void Links_are_masked_for_display()
     {
-        Assert.Equal(
-            "calendar.google.com/…abc.ics",
-            CalendarService.Mask("https://calendar.google.com/calendar/ical/me%40x.com/private-0123456789abc/basic_abc.ics"));
-        Assert.Equal("not a link", CalendarService.Mask("not a link"));
+        string maskA = CalendarService.Mask("https://calendar.google.com/calendar/ical/a%40x.com/private-1/basic.ics");
+        string maskB = CalendarService.Mask("https://calendar.google.com/calendar/ical/b%40x.com/private-2/basic.ics");
+
+        Assert.Matches(@"^calendar\.google\.com · #[0-9a-f]{4}$", maskA);
+        Assert.Matches(@"^calendar\.google\.com · #[0-9a-f]{4}$", maskB);
+        Assert.NotEqual(maskA, maskB);
+        Assert.Equal("(unreadable link)", CalendarService.Mask("not a link"));
+    }
+
+    [Fact]
+    public void Floating_local_times_are_not_shifted_by_the_machines_utc_offset()
+    {
+        // No Z and no TZID: RFC 5545 says this is local wall-clock time, whatever machine reads it.
+        const string ics = """
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:deck-tests
+            BEGIN:VEVENT
+            UID:floating-1
+            DTSTART:20260924T090000
+            DTEND:20260924T093000
+            SUMMARY:Floating call
+            END:VEVENT
+            END:VCALENDAR
+            """;
+
+        var calendar = CalendarParser.Load(ics);
+
+        var entries = CalendarParser.Entries(calendar, new DateTime(2026, 9, 23), new DateTime(2026, 9, 25));
+
+        var entry = Assert.Single(entries);
+        Assert.Equal(new DateTime(2026, 9, 24, 9, 0, 0), entry.Start);
+        Assert.Equal(new DateTime(2026, 9, 24, 9, 30, 0), entry.End);
+    }
+
+    [Fact]
+    public void A_rule_that_never_matches_does_not_block_the_rest_of_the_calendar()
+    {
+        // FREQ=HOURLY;BYMONTH=2;BYMONTHDAY=30 never matches (February never has a 30th) and, left
+        // unbounded, Ical.Net searches for a match forever.
+        const string ics = """
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:deck-tests
+            BEGIN:VEVENT
+            UID:never-1
+            DTSTART:20260101T090000Z
+            DTEND:20260101T100000Z
+            RRULE:FREQ=HOURLY;BYMONTH=2;BYMONTHDAY=30
+            SUMMARY:Never
+            END:VEVENT
+            BEGIN:VEVENT
+            UID:normal-1
+            DTSTART:20260924T090000Z
+            DTEND:20260924T100000Z
+            SUMMARY:Normal
+            END:VEVENT
+            END:VCALENDAR
+            """;
+
+        var calendar = CalendarParser.Load(ics);
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var entries = CalendarParser.Entries(calendar, new DateTime(2026, 9, 23), new DateTime(2026, 9, 25));
+        stopwatch.Stop();
+
+        Assert.Contains(entries, e => e.Title == "Normal");
+        Assert.True(stopwatch.ElapsedMilliseconds < 5000, $"took {stopwatch.ElapsedMilliseconds}ms");
+    }
+
+    [Fact]
+    public void An_all_day_event_just_inside_the_window_end_is_returned()
+    {
+        // Window ends an hour after local midnight on the event's day, not at the end of that day:
+        // this guards the one-day slack before the early-stop in CalendarParser.Entries.
+        const string ics = """
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:deck-tests
+            BEGIN:VEVENT
+            UID:allday-boundary
+            DTSTART;VALUE=DATE:20260930
+            DTEND;VALUE=DATE:20261001
+            SUMMARY:Boundary holiday
+            END:VEVENT
+            END:VCALENDAR
+            """;
+
+        var calendar = CalendarParser.Load(ics);
+
+        var entries = CalendarParser.Entries(calendar, new DateTime(2026, 9, 29), new DateTime(2026, 9, 30, 1, 0, 0));
+
+        Assert.Contains(entries, e => e.Title == "Boundary holiday");
+    }
+
+    [Fact]
+    public void A_meeting_already_running_at_the_window_start_is_returned()
+    {
+        const string ics = """
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:deck-tests
+            BEGIN:VEVENT
+            UID:in-progress
+            DTSTART:20260924T060000Z
+            DTEND:20260924T220000Z
+            SUMMARY:Long call
+            END:VEVENT
+            END:VCALENDAR
+            """;
+
+        var calendar = CalendarParser.Load(ics);
+
+        // fromLocal lands 6 hours into a 16-hour meeting: it began before the window opened but
+        // is still running when it does. This guards the day-early start in CalendarParser.Entries.
+        var entries = CalendarParser.Entries(calendar, Local(9, 24, 12), Local(9, 24, 18));
+
+        Assert.Contains(entries, e => e.Title == "Long call");
     }
 }
