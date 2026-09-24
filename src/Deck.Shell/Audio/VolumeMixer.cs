@@ -27,8 +27,27 @@ internal sealed class VolumeMixer : IDisposable
 
     public IReadOnlyList<MixerApp> Apps { get; private set; } = [];
 
+    /// <summary>
+    /// The output device's own level, 0–1 — what the taskbar speaker sets. Every app's level is a
+    /// fraction of this, so it's the one control that turns everything down at once.
+    /// </summary>
+    public float MasterVolume { get; private set; } = 1f;
+
+    public bool MasterMuted { get; private set; }
+
+    public void SetMasterVolume(float volume) =>
+        WithOutput(endpoint => endpoint.MasterVolumeLevelScalar = Math.Clamp(volume, 0f, 1f));
+
+    public void SetMasterMute(bool muted) => WithOutput(endpoint => endpoint.Mute = muted);
+
     public void Refresh()
     {
+        WithOutput(endpoint =>
+        {
+            MasterVolume = endpoint.MasterVolumeLevelScalar;
+            MasterMuted = endpoint.Mute;
+        });
+
         var byApp = new Dictionary<string, MixerApp>(StringComparer.OrdinalIgnoreCase);
 
         ForEachSession((session, name, path) =>
@@ -60,6 +79,19 @@ internal sealed class VolumeMixer : IDisposable
             if (string.Equals(name, appName, StringComparison.OrdinalIgnoreCase))
                 session.SimpleAudioVolume.Mute = muted;
         });
+
+    private void WithOutput(Action<AudioEndpointVolume> action)
+    {
+        try
+        {
+            using var device = _enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+            action(device.AudioEndpointVolume);
+        }
+        catch
+        {
+            // No default output device, or it changed mid-call; the next refresh catches up.
+        }
+    }
 
     private void ForEachSession(Action<AudioSessionControl, string, string?> action)
     {

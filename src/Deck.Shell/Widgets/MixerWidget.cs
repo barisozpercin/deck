@@ -14,8 +14,10 @@ internal sealed class MixerWidget(WidgetContext context) : WidgetBase(context, "
 
     private DeckConfig Config => Context.Config;
 
-    /// <summary>How many apps fit: the 2×2 tile has room for six, the 2×1 for three.</summary>
+    /// <summary>How many rows fit: the 2×2 tile has room for six, the 2×1 for three. The master row takes one.</summary>
     private int RowLimit => Variant == "short" ? 3 : 6;
+
+    private const string MasterPrefix = "master:";
 
     public override void Start()
     {
@@ -35,6 +37,12 @@ internal sealed class MixerWidget(WidgetContext context) : WidgetBase(context, "
         if (message.StartsWith("set:", StringComparison.Ordinal))
         {
             ApplyChange(message["set:".Length..]);
+            return true;
+        }
+
+        if (message.StartsWith(MasterPrefix, StringComparison.Ordinal))
+        {
+            ApplyMasterChange(message[MasterPrefix.Length..]);
             return true;
         }
 
@@ -93,8 +101,9 @@ internal sealed class MixerWidget(WidgetContext context) : WidgetBase(context, "
     }
 
     /// <summary>
-    /// The rows the tile shows. Remembered apps always appear, running or not, so a level can be
-    /// set for something that isn't open yet; whatever else is making sound fills the rest.
+    /// The rows the tile shows: the master level first, always, then the apps. Remembered apps
+    /// always appear, running or not, so a level can be set for something that isn't open yet;
+    /// whatever else is making sound fills the rest.
     /// </summary>
     private object[] BuildRows()
     {
@@ -104,9 +113,21 @@ internal sealed class MixerWidget(WidgetContext context) : WidgetBase(context, "
             .Concat(Mixer.Apps.Where(a => a.Active).Select(a => a.Name))
             .Concat(Mixer.Apps.Select(a => a.Name))
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(RowLimit)
+            .Take(RowLimit - 1)
             .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+
+        object master = new
+        {
+            name = "Master",
+            label = "Master",
+            icon = (string?)null,
+            volume = (int)Math.Round(Mixer.MasterVolume * 100),
+            muted = Mixer.MasterMuted,
+            active = true,
+            running = true,
+            master = true
+        };
 
         return names.Select(object (name) =>
         {
@@ -118,7 +139,9 @@ internal sealed class MixerWidget(WidgetContext context) : WidgetBase(context, "
             return new
             {
                 name,
-                label = identity.DisplayName ?? name,
+                // The system-sounds session borrows the volume mixer's icon, which also brings
+                // its name; "Volume Mixer" reads as the overall level, which it isn't.
+                label = name == VolumeMixer.SystemSoundsName ? "System sounds" : identity.DisplayName ?? name,
                 icon = identity.IconDataUri,
                 // A running app's real volume is the truth; a remembered one falls back to
                 // whatever level was stored for its next launch.
@@ -129,7 +152,32 @@ internal sealed class MixerWidget(WidgetContext context) : WidgetBase(context, "
                 active = running && app!.Active,
                 running
             };
-        }).ToArray();
+        }).Prepend(master).ToArray();
+    }
+
+    /// <summary>The master row's drag and mute. Not remembered: it's Windows' own setting, not the deck's.</summary>
+    private void ApplyMasterChange(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+
+            if (root.TryGetProperty("volume", out var volume) && volume.ValueKind == JsonValueKind.Number)
+                Mixer.SetMasterVolume(Math.Clamp(volume.GetInt32(), 0, 100) / 100f);
+
+            if (root.TryGetProperty("muted", out var muted) &&
+                muted.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                Mixer.SetMasterMute(muted.GetBoolean());
+                Mixer.Refresh();
+                Push();
+            }
+        }
+        catch (Exception ex) when (ex is JsonException or FormatException or InvalidOperationException)
+        {
+            // Malformed message from the page; same reasoning as ApplyChange.
+        }
     }
 
     /// <summary>

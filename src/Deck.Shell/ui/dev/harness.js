@@ -50,12 +50,13 @@
     mixer: {
       apps: 6,
       rows: [
+        { name: 'Master', label: 'Master', icon: null, volume: 64, muted: false, active: true, running: true, master: true },
         { name: 'brave', label: 'Brave Browser', icon: null, volume: 85, muted: false, active: false, running: false },
         { name: 'chrome', label: 'Google Chrome', icon: null, volume: 81, muted: false, active: true, running: true },
         { name: 'Discord', label: 'Discord', icon: null, volume: 78, muted: false, active: false, running: false },
         { name: 'Gather', label: 'Gather', icon: null, volume: 95, muted: false, active: false, running: false },
         { name: 'Spotify', label: 'Spotify', icon: null, volume: 53, muted: false, active: false, running: false },
-        { name: 'System', label: 'Volume Mixer', icon: null, volume: 19, muted: false, active: false, running: true }
+        { name: 'System', label: 'System sounds', icon: null, volume: 19, muted: false, active: false, running: true }
       ]
     },
     pomodoro: { phase: 'idle', remaining: '25:00', blocks: 0, awaiting: false },

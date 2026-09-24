@@ -35,7 +35,17 @@ const ICONS = {
   play: `<svg class="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor" /></svg>`,
   pause: `<svg class="i-pause" viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor" /></svg>`,
   prev: `<svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9 12z" fill="currentColor" /></svg>`,
-  next: `<svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM4 5v14l11-7z" fill="currentColor" /></svg>`
+  next: `<svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM4 5v14l11-7z" fill="currentColor" /></svg>`,
+  speaker: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 9v6h4l5 4V5L8 9z" fill="currentColor" />
+      <path d="M16.5 8.5a5 5 0 0 1 0 7" />
+      <path d="M19 6a8.5 8.5 0 0 1 0 12" />
+    </svg>`,
+  speakerMuted: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 9v6h4l5 4V5L8 9z" fill="currentColor" />
+      <line x1="16" y1="9" x2="22" y2="15" />
+      <line x1="22" y1="9" x2="16" y2="15" />
+    </svg>`
 };
 
 function horizontalDrag(handle, measure, onValue, onEnd) {
@@ -91,14 +101,20 @@ function renderMixer(tile, rows, total, send) {
   const host = q(tile, '.mx-rows');
   host.innerHTML = '';
 
+  const appRows = rows.filter((r) => !r.master).length;
   setText(tile, '.mx-empty',
-    rows.length === 0 ? 'no audio apps'
-    : total > rows.length ? (total - rows.length) + ' more · right-click'
+    appRows === 0 ? 'no audio apps'
+    : total > appRows ? (total - appRows) + ' more · right-click'
     : '');
 
   for (const r of rows) {
+    const change = (payload) => (r.master
+      ? 'master:' + JSON.stringify(payload)
+      : 'set:' + JSON.stringify({ name: r.name, ...payload }));
+
     const row = document.createElement('div');
     row.className = 'mx-row'
+      + (r.master ? ' master' : '')
       + (r.muted ? ' muted' : '')
       + (r.active ? '' : ' quiet')
       + (r.running === false ? ' offline' : '');
@@ -109,27 +125,33 @@ function renderMixer(tile, rows, total, send) {
       icon.src = r.icon;
       icon.alt = '';
       icon.draggable = false;
+    } else if (r.master) {
+      icon.innerHTML = r.muted ? ICONS.speakerMuted : ICONS.speaker;
     }
 
     const name = document.createElement('span');
     name.className = 'mx-name';
     name.textContent = r.label || r.name;
 
-    const tip = (r.running === false
-      ? r.name + ' — not running; this level applies when it next opens'
-      : r.name + (r.muted ? ' — muted, click to unmute' : ' — click to mute'))
-      + '\nRight-click to remove it from the mixer';
+    const tip = r.master
+      ? 'Overall volume' + (r.muted ? ' — muted, click to unmute' : ' — click to mute')
+      : (r.running === false
+        ? r.name + ' — not running; this level applies when it next opens'
+        : r.name + (r.muted ? ' — muted, click to unmute' : ' — click to mute'))
+        + '\nRight-click to remove it from the mixer';
     icon.title = tip;
     name.title = tip;
 
-    row.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      send('forget:' + r.name);
-    });
+    if (!r.master) {
+      row.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        send('forget:' + r.name);
+      });
+    }
 
     if (r.running !== false) {
-      const toggleMute = () => send('set:' + JSON.stringify({ name: r.name, muted: !r.muted }));
+      const toggleMute = () => send(change({ muted: !r.muted }));
       icon.addEventListener('click', toggleMute);
       name.addEventListener('click', toggleMute);
     }
@@ -152,7 +174,7 @@ function renderMixer(tile, rows, total, send) {
       tile.mixerDragging = true;
       fill.style.width = v + '%';
       value.textContent = v;
-      send('set:' + JSON.stringify({ name: r.name, volume: v }));
+      send(change({ volume: v }));
     }, () => {
       tile.mixerDragging = false;
       send('commit');
