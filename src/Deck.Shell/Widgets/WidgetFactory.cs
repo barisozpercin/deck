@@ -20,6 +20,8 @@ internal static class WidgetFactory
         { Kind: "dice" } => new DiceWidget(context),
         { Kind: "network" } => new NetworkWidget(context),
         { Kind: "display" } => new DisplayWidget(context),
+        { Kind: "agenda" } => new AgendaWidget(context),
+        { Kind: "month" } => new MonthWidget(context),
         { Kind: "preset", Ref: { } id } => new PresetWidget(context, id),
         { Kind: "shortcut", Ref: { } id } => new ShortcutWidget(context, id),
         { Kind: "countdown", Ref: { } countdownId } => new CountdownWidget(context, countdownId),

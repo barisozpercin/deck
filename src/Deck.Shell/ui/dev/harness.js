@@ -62,7 +62,23 @@
     stopwatch: { running: false, elapsed: '00:00', hasElapsed: false },
     dice: { mode: 'd6', last: '5' },
     network: { state: 'good', ping: '18 ms', down: '12.4 Mb/s', up: '0.8 Mb/s' },
-    display: { ready: true, tint: false, level: 38, monitors: 3, unsupported: [] }
+    display: { ready: true, tint: false, level: 38, monitors: 3, unsupported: [] },
+    agenda: {
+      status: 'ok', total: 4,
+      events: [
+        { title: 'Standup', when: 'in 4 min', state: 'soon', link: true },
+        { title: 'Design review', when: '16:00', state: 'later', link: true },
+        { title: '1:1 with Ayşe', when: 'Tomorrow 09:00', state: 'later', link: false }
+      ]
+    },
+    month: {
+      title: 'September 2026', status: 'ok',
+      days: Array.from({ length: 42 }, (_, i) => {
+        const date = new Date(2026, 7, 31 + i);
+        const events = [3, 10, 17, 24].includes(date.getDate()) && date.getMonth() === 8 ? ['11:00 Standup'] : [];
+        return { day: date.getDate(), inMonth: date.getMonth() === 8, today: date.getMonth() === 8 && date.getDate() === 24, events };
+      })
+    }
   };
 
   const presets = [{ id: 'p1', name: 'WORK', count: 5 }, { id: 'p2', name: 'GAMING', count: 2 }];
