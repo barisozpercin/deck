@@ -18,6 +18,7 @@ internal static class WidgetFactory
         { Kind: "pomodoro" } => new PomodoroWidget(context),
         { Kind: "stopwatch" } => new StopwatchWidget(context),
         { Kind: "dice" } => new DiceWidget(context),
+        { Kind: "network" } => new NetworkWidget(context),
         { Kind: "preset", Ref: { } id } => new PresetWidget(context, id),
         { Kind: "shortcut", Ref: { } id } => new ShortcutWidget(context, id),
         { Kind: "countdown", Ref: { } countdownId } => new CountdownWidget(context, countdownId),

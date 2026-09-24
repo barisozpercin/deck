@@ -1,0 +1,15 @@
+/* --- network: read-only, so no .pressable. The ping carries the colour; the speeds stay quiet --- */
+.w-network .net-ping { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.w-network .net-rates {
+  display: flex;
+  gap: 12px;
+  font-size: 11.5px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.w-network.good .net-ping { color: var(--ok); }
+.tile.w-network.slow { border-color: #6b5312; }
+.w-network.slow .net-ping { color: var(--warn); }
+.tile.w-network.bad, .tile.w-network.offline { background: var(--danger-bg); border-color: var(--danger-line); }
+.w-network.bad .net-ping, .w-network.offline .net-ping,
+.w-network.bad .label, .w-network.offline .label { color: var(--danger); }
