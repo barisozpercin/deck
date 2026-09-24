@@ -59,7 +59,8 @@
       ]
     },
     pomodoro: { phase: 'idle', remaining: '25:00', blocks: 0, awaiting: false },
-    stopwatch: { running: false, elapsed: '00:00', hasElapsed: false }
+    stopwatch: { running: false, elapsed: '00:00', hasElapsed: false },
+    dice: { mode: 'd6', last: '5' }
   };
 
   const presets = [{ id: 'p1', name: 'WORK', count: 5 }, { id: 'p2', name: 'GAMING', count: 2 }];
