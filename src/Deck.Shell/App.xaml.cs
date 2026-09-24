@@ -33,19 +33,22 @@ public partial class App : Application
 
     private static void Release()
     {
-        var release = ReleaseScreenSpace;
-        ReleaseScreenSpace = null;   // idempotent: several exit paths can fire
-        release?.Invoke();
-
         // The reading tint lives in the display gamma ramps, which outlive the process; a crash
-        // must not leave every screen orange until the next reboot.
+        // must not leave every screen orange until the next reboot. This runs first, in its own
+        // try/catch, so a throw from the AppBar release below can't skip it — and Disable (rather
+        // than Reset) also stops the display widget's periodic refresh from re-applying the tint
+        // while the crash dialog's own message loop keeps its timer ticking.
         try
         {
-            Deck.Shell.Display.GammaTint.Reset();
+            Deck.Shell.Display.GammaTint.Disable();
         }
         catch
         {
             // Nothing more can be done on the way down.
         }
+
+        var release = ReleaseScreenSpace;
+        ReleaseScreenSpace = null;   // idempotent: several exit paths can fire
+        release?.Invoke();
     }
 }

@@ -7,8 +7,12 @@ namespace Deck.Shell.Display;
 /// The warm reading tint, applied through each display's gamma ramp. Fixed strength, and well
 /// inside what Windows accepted on this desk's displays (it refuses ramps too far from neutral).
 ///
-/// It only undoes what it did: <see cref="Reset"/> does nothing unless the deck applied the tint,
-/// so it never overwrites another app's calibration.
+/// It restores what was there before: the first <see cref="Apply"/> after a reset saves each
+/// attached display's current ramp (another app — a calibration tool, Night Light — may already
+/// have one that isn't identity), and <see cref="Reset"/> puts that back rather than assuming
+/// plain identity. A display with nothing saved falls back to identity. A reset that couldn't
+/// restore anything (e.g. a locked desktop) leaves the saved ramps and <see cref="IsApplied"/> in
+/// place, so the next <see cref="Reset"/> tries again instead of losing them.
 /// </summary>
 internal static class GammaTint
 {
@@ -17,8 +21,20 @@ internal static class GammaTint
 
     public static bool IsApplied { get; private set; }
 
+    /// <summary>Each attached display's ramp just before the deck first tinted it, keyed by device name.</summary>
+    private static readonly Dictionary<string, ushort[]> _saved = [];
+
+    /// <summary>Set by <see cref="Disable"/> on the way down, so a timer still ticking behind a crash dialog can't re-apply the tint.</summary>
+    private static bool _disabled;
+
     public static void Apply()
     {
+        if (_disabled) return;
+
+        // Only the first Apply after a reset captures — a periodic re-apply while already tinted
+        // would otherwise "save" the warm ramp itself.
+        if (!IsApplied) Capture();
+
         if (SetAll(BuildRamp(1.0, Green, Blue))) IsApplied = true;
     }
 
@@ -26,8 +42,18 @@ internal static class GammaTint
     {
         if (!IsApplied) return;
 
-        SetAll(BuildRamp(1.0, 1.0, 1.0));
-        IsApplied = false;
+        if (RestoreAll())
+        {
+            IsApplied = false;
+            _saved.Clear();
+        }
+    }
+
+    /// <summary>Blocks any later Apply, then resets. For process teardown, where nothing should re-tint the screens again.</summary>
+    public static void Disable()
+    {
+        _disabled = true;
+        Reset();
     }
 
     /// <summary>Red, green then blue, 256 entries each, scaled from the identity ramp.</summary>
@@ -46,8 +72,24 @@ internal static class GammaTint
         return ramp;
     }
 
+    private static void Capture()
+    {
+        _saved.Clear();
+        ForEachDisplay((dc, name) =>
+        {
+            var ramp = new ushort[3 * 256];
+            if (GetDeviceGammaRamp(dc, ramp)) _saved[name] = ramp;
+            return true;
+        });
+    }
+
+    private static bool RestoreAll() => ForEachDisplay((dc, name) =>
+        SetDeviceGammaRamp(dc, _saved.TryGetValue(name, out var ramp) ? ramp : BuildRamp(1.0, 1.0, 1.0)));
+
     /// <summary>Per display, not the whole-screen DC: on a multi-monitor desk only per-display ramps take.</summary>
-    private static bool SetAll(ushort[] ramp)
+    private static bool SetAll(ushort[] ramp) => ForEachDisplay((dc, _) => SetDeviceGammaRamp(dc, ramp));
+
+    private static bool ForEachDisplay(Func<IntPtr, string, bool> action)
     {
         bool any = false;
 
@@ -62,7 +104,7 @@ internal static class GammaTint
 
             try
             {
-                any |= SetDeviceGammaRamp(dc, ramp);
+                any |= action(dc, device.DeviceName);
             }
             finally
             {

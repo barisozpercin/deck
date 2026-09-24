@@ -2,6 +2,12 @@ using static Deck.Shell.Interop.DisplayNative;
 
 namespace Deck.Shell.Display;
 
+/// <summary>
+/// One monitor's brightness. <c>Supported</c> is fixed for the process's life: it's whether the
+/// monitor answered <c>GetMonitorBrightness</c> at startup, not whether the last read succeeded.
+/// <c>Percent</c> is always 0 for an unsupported monitor, and for a supported one is either the
+/// value just read or, if that read failed, the last value this process knows about.
+/// </summary>
 internal sealed record MonitorLevel(string Name, bool Supported, int Percent);
 
 /// <summary>
@@ -17,6 +23,11 @@ internal sealed class MonitorBrightness : IDisposable
     private readonly object _gate = new();
     private readonly List<PHYSICAL_MONITOR[]> _groups = [];
     private readonly List<Monitor> _monitors = [];
+
+    /// <summary>Last percent seen for each monitor, by index into <see cref="_monitors"/>; a stale
+    /// read falls back to this instead of reporting 0.</summary>
+    private readonly List<int> _lastPercent = [];
+
     private bool _disposed;
 
     public MonitorBrightness()
@@ -31,26 +42,37 @@ internal sealed class MonitorBrightness : IDisposable
 
             foreach (var physical in group)
             {
-                bool supported = GetMonitorBrightness(physical.hPhysicalMonitor, out uint min, out _, out uint max) && max > min;
+                bool supported = GetMonitorBrightness(physical.hPhysicalMonitor, out uint min, out uint current, out uint max) && max > min;
                 _monitors.Add(new Monitor(physical.szPhysicalMonitorDescription, physical.hPhysicalMonitor, min, max, supported));
+                _lastPercent.Add(supported ? ToPercent(current, min, max) : 0);
             }
 
             return true;
         }, IntPtr.Zero);
     }
 
-    /// <summary>Every monitor, in a fixed order; unsupported ones report Percent 0.</summary>
+    /// <summary>
+    /// Every monitor, in a fixed order. A supported monitor whose read fails keeps reporting its
+    /// last-known percent rather than snapping to 0 — so a drag doesn't mistake a hiccup for the
+    /// monitor going dark and send it to minimum on the next <see cref="Set"/>.
+    /// </summary>
     public IReadOnlyList<MonitorLevel> Read()
     {
         lock (_gate)
         {
-            return _monitors.Select(m =>
-            {
-                if (_disposed || !m.Supported || !GetMonitorBrightness(m.Handle, out _, out uint current, out _))
-                    return new MonitorLevel(m.Name, false, 0);
+            var levels = new List<MonitorLevel>(_monitors.Count);
 
-                return new MonitorLevel(m.Name, true, ToPercent(current, m.Min, m.Max));
-            }).ToList();
+            for (int i = 0; i < _monitors.Count; i++)
+            {
+                var m = _monitors[i];
+
+                if (!_disposed && m.Supported && GetMonitorBrightness(m.Handle, out _, out uint current, out _))
+                    _lastPercent[i] = ToPercent(current, m.Min, m.Max);
+
+                levels.Add(new MonitorLevel(m.Name, m.Supported, m.Supported ? _lastPercent[i] : 0));
+            }
+
+            return levels;
         }
     }
 
@@ -64,7 +86,11 @@ internal sealed class MonitorBrightness : IDisposable
             for (int i = 0; i < _monitors.Count && i < percents.Count; i++)
             {
                 var m = _monitors[i];
-                if (m.Supported) SetMonitorBrightness(m.Handle, FromPercent(percents[i], m.Min, m.Max));
+                if (!m.Supported) continue;
+
+                int percent = Math.Clamp(percents[i], 0, 100);
+                SetMonitorBrightness(m.Handle, FromPercent(percent, m.Min, m.Max));
+                _lastPercent[i] = percent;
             }
         }
     }
@@ -79,9 +105,13 @@ internal sealed class MonitorBrightness : IDisposable
         }
     }
 
-    private static int ToPercent(uint value, uint min, uint max) =>
-        (int)Math.Round((value - min) * 100.0 / (max - min));
+    /// <summary>Clamped to 0–100: a monitor reporting a current value outside its own min/max must not wrap or overshoot.</summary>
+    internal static int ToPercent(uint value, uint min, uint max)
+    {
+        if (max <= min) return 0;
+        return Math.Clamp((int)Math.Round((value - (double)min) * 100.0 / (max - min)), 0, 100);
+    }
 
-    private static uint FromPercent(int percent, uint min, uint max) =>
+    internal static uint FromPercent(int percent, uint min, uint max) =>
         min + (uint)Math.Round(Math.Clamp(percent, 0, 100) * (max - min) / 100.0);
 }

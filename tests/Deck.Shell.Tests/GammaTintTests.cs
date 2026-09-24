@@ -5,6 +5,14 @@ namespace Deck.Shell.Tests;
 public class GammaTintTests
 {
     [Fact]
+    public void Not_applied_until_something_calls_Apply()
+    {
+        // No test in this suite calls Apply/Reset/Disable: doing so would touch real hardware
+        // (SetDeviceGammaRamp/GetDeviceGammaRamp). This only checks the untouched default.
+        Assert.False(GammaTint.IsApplied);
+    }
+
+    [Fact]
     public void A_neutral_ramp_is_the_identity_windows_reports()
     {
         var ramp = GammaTint.BuildRamp(1, 1, 1);

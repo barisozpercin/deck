@@ -67,4 +67,7 @@ internal static class DisplayNative
 
     [DllImport("gdi32.dll")]
     public static extern bool SetDeviceGammaRamp(IntPtr dc, ushort[] ramp);
+
+    [DllImport("gdi32.dll")]
+    public static extern bool GetDeviceGammaRamp(IntPtr dc, ushort[] ramp);
 }
