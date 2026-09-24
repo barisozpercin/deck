@@ -86,6 +86,60 @@ public class GammaTintTests
     }
 
     [Fact]
+    public void A_quantised_warm_ramp_is_still_recognised_as_warm()
+    {
+        // Some drivers round-trip a written ramp through their own quantisation, so a captured
+        // ramp can come back with its low byte zeroed while still meaning "already warm".
+        var quantised = new ushort[WarmRamp.Length];
+        for (int i = 0; i < WarmRamp.Length; i++) quantised[i] = (ushort)(WarmRamp[i] & 0xFF00);
+
+        var fake = new FakeDisplays(("A", quantised));
+        var state = fake.NewState();
+
+        state.Apply();
+        state.Reset();
+
+        Assert.False(state.IsApplied);
+        Assert.Equal(GammaTint.BuildRamp(1.0, 1.0, 1.0), fake.Read("A"));
+    }
+
+    [Fact]
+    public void A_ramp_differing_from_warm_by_more_than_the_tolerance_is_saved_and_restored()
+    {
+        var original = (ushort[])WarmRamp.Clone();
+        original[100] += 257;  // one entry, just past WarmTolerance
+        var fake = new FakeDisplays(("A", original));
+        var state = fake.NewState();
+
+        state.Apply();
+        state.Reset();
+
+        Assert.False(state.IsApplied);
+        Assert.Equal(original, fake.Read("A"));
+    }
+
+    [Fact]
+    public void Reset_restores_the_others_when_a_display_disappears_after_apply()
+    {
+        var originalA = GammaTint.BuildRamp(0.9, 0.9, 0.9);
+        var originalB = GammaTint.BuildRamp(0.8, 0.8, 0.8);
+        var originalC = GammaTint.BuildRamp(0.7, 0.7, 0.7);
+        var fake = new FakeDisplays(("A", originalA), ("B", originalB), ("C", originalC));
+        var state = fake.NewState();
+
+        state.Apply();
+
+        // "B" goes away mid-tint (unplugged, put to sleep); its restore write now fails.
+        fake.RefuseWrites("B");
+        state.Reset();
+
+        Assert.True(state.IsApplied);          // still true, and only because of B
+        Assert.Equal(originalA, fake.Read("A"));
+        Assert.Equal(originalC, fake.Read("C"));
+        Assert.Equal(WarmRamp, fake.Read("B"));
+    }
+
+    [Fact]
     public void Reset_retries_only_the_display_that_refused_to_restore()
     {
         var originalA = GammaTint.BuildRamp(0.9, 0.9, 0.9);
@@ -95,7 +149,7 @@ public class GammaTintTests
 
         state.Apply();
 
-        fake.RefuseNextWrite("B");
+        fake.RefuseWrites("B");
         state.Reset();
 
         Assert.True(state.IsApplied);
@@ -156,7 +210,7 @@ public class GammaTintTests
             return true;
         }
 
-        public void RefuseNextWrite(string name) => _refuse.Add(name);
+        public void RefuseWrites(string name) => _refuse.Add(name);
 
         public void AllowWrites(string name) => _refuse.Remove(name);
 

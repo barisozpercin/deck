@@ -40,6 +40,9 @@ internal sealed class DisplayWidget(WidgetContext context) : WidgetBase(context,
         Context.Tick.Acquire();
 
         if (Context.Config.DisplayTint) GammaTint.Apply();
+        // A previous run may have left a display tinted after a refused restore; retry now
+        // rather than waiting for the first tick. A no-op when nothing is tracked.
+        else GammaTint.Reset();
 
         _ = OpenMonitorsAsync();
     }
@@ -104,23 +107,13 @@ internal sealed class DisplayWidget(WidgetContext context) : WidgetBase(context,
     private async Task OpenMonitorsAsync()
     {
         MonitorBrightness? monitors = null;
+        IReadOnlyList<MonitorLevel>? levels = null;
 
         try
         {
             // Enumerating asks every monitor for its range: seconds, on a bad day. Never on the UI thread.
             monitors = await Task.Run(() => new MonitorBrightness());
-            var levels = await Task.Run(monitors.Read);
-
-            if (_stopped)
-            {
-                monitors.Dispose();
-                return;
-            }
-
-            lock (_gate) _monitors = monitors;
-            _levels = levels;
-            _ready = true;
-            Push();
+            levels = await Task.Run(monitors.Read);
         }
         catch (Exception ex)
         {
@@ -138,7 +131,21 @@ internal sealed class DisplayWidget(WidgetContext context) : WidgetBase(context,
 
             _ready = true;
             Push();
+            return;
         }
+
+        // Outside the try: a throw from here on (e.g. from Push) must not dispose monitors the
+        // widget has already taken ownership of.
+        if (_stopped)
+        {
+            monitors.Dispose();
+            return;
+        }
+
+        lock (_gate) _monitors = monitors;
+        _levels = levels;
+        _ready = true;
+        Push();
     }
 
     private void Drag(int target)
@@ -227,6 +234,11 @@ internal sealed class DisplayWidget(WidgetContext context) : WidgetBase(context,
 
     private void OnTick()
     {
-        if (++_ticks % TintRefreshTicks == 0 && Context.Config.DisplayTint) GammaTint.Apply();
+        if (++_ticks % TintRefreshTicks != 0) return;
+
+        if (Context.Config.DisplayTint) GammaTint.Apply();
+        // Same cadence retries a reset a display refused earlier, e.g. one that was locked
+        // when Stop or ToggleTint last tried to restore it.
+        else if (GammaTint.IsApplied) GammaTint.Reset();
     }
 }

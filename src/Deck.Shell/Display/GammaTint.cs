@@ -101,7 +101,8 @@ internal static class GammaTint
 /// The tint's capture/restore state machine, independent of Win32 so it can be driven by tests
 /// against fake displays. <paramref name="listDisplays"/> reports the currently attached
 /// displays by name; <paramref name="readRamp"/> and <paramref name="writeRamp"/> get and set one
-/// display's ramp, returning null/false on failure the way the real DDC calls do.
+/// display's ramp, returning null/false on failure the way the real GDI calls do (the gamma ramp
+/// lives in gdi32, not the DDC/CI monitor API the brightness widget talks to).
 /// </summary>
 internal sealed class GammaTintState(
     Func<IReadOnlyList<string>> listDisplays,
