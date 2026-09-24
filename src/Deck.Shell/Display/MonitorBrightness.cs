@@ -89,8 +89,8 @@ internal sealed class MonitorBrightness : IDisposable
                 if (!m.Supported) continue;
 
                 int percent = Math.Clamp(percents[i], 0, 100);
-                SetMonitorBrightness(m.Handle, FromPercent(percent, m.Min, m.Max));
-                _lastPercent[i] = percent;
+                if (SetMonitorBrightness(m.Handle, FromPercent(percent, m.Min, m.Max)))
+                    _lastPercent[i] = percent;
             }
         }
     }

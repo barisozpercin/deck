@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.InteropServices;
 using Deck.Shell.Display;
 
 namespace Deck.Shell.Widgets;
@@ -104,35 +103,42 @@ internal sealed class DisplayWidget(WidgetContext context) : WidgetBase(context,
 
     private async Task OpenMonitorsAsync()
     {
-        MonitorBrightness monitors;
-        IReadOnlyList<MonitorLevel> levels;
+        MonitorBrightness? monitors = null;
 
         try
         {
             // Enumerating asks every monitor for its range: seconds, on a bad day. Never on the UI thread.
             monitors = await Task.Run(() => new MonitorBrightness());
-            levels = await Task.Run(monitors.Read);
-        }
-        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or ExternalException or InvalidOperationException)
-        {
-            // No DDC/CI monitors to talk to (or the Win32 wrappers can't be reached at all): show
-            // "n/a" instead of leaving the tile stuck on its loading state forever.
-            Debug.WriteLine($"Display widget failed to enumerate monitors: {ex}");
+            var levels = await Task.Run(monitors.Read);
+
+            if (_stopped)
+            {
+                monitors.Dispose();
+                return;
+            }
+
+            lock (_gate) _monitors = monitors;
+            _levels = levels;
             _ready = true;
             Push();
-            return;
         }
-
-        if (_stopped)
+        catch (Exception ex)
         {
-            monitors.Dispose();
-            return;
-        }
+            // No DDC/CI monitors to talk to (or the Win32 wrappers can't be reached at all): show
+            // "n/a" instead of leaving the tile stuck on its loading state forever. Caught broadly
+            // because this runs fire-and-forget from Start — an exception here has nowhere else to
+            // go and would otherwise vanish silently.
+            Debug.WriteLine($"Display widget failed to enumerate monitors: {ex}");
 
-        lock (_gate) _monitors = monitors;
-        _levels = levels;
-        _ready = true;
-        Push();
+            // The constructor can succeed even when the later Read fails; either way, a
+            // successfully-built MonitorBrightness still holds physical-monitor handles to release.
+            monitors?.Dispose();
+
+            if (_stopped) return;
+
+            _ready = true;
+            Push();
+        }
     }
 
     private void Drag(int target)
