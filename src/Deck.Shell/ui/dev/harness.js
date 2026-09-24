@@ -8,7 +8,7 @@
     mic: ['Mic', { standard: [1, 1, '1×1'] }],
     camera: ['Camera', { standard: [1, 1, '1×1'] }],
     clock: ['World Clock', { standard: [1, 1, '1×1'] }],
-    mixer: ['Mixer', { tall: [2, 2, '2×2 · 6 apps'], short: [2, 1, '2×1 · 3 apps'] }],
+    mixer: ['Mixer', { tall: [2, 2, '2×2 · 8 apps'], short: [2, 1, '2×1 · 2 apps'] }],
     pomodoro: ['Pomodoro', { standard: [1, 1, '1×1'] }],
     stopwatch: ['Stopwatch', { standard: [1, 1, '1×1'] }],
     dice: ['Dice', { standard: [1, 1, '1×1'] }],
@@ -48,15 +48,18 @@
       ]
     },
     mixer: {
-      apps: 6,
+      apps: 9,
       rows: [
-        { name: 'Master', label: 'Master', icon: null, volume: 64, muted: false, active: true, running: true, master: true },
+        { name: 'Master', label: 'Master', icon: null, volume: 64, muted: false, active: true, running: true, master: true, pinned: true, divider: false },
+        { name: 'System', label: 'System sounds', icon: null, volume: 19, muted: false, active: false, running: true, pinned: true, divider: true },
         { name: 'brave', label: 'Brave Browser', icon: null, volume: 85, muted: false, active: false, running: false },
         { name: 'chrome', label: 'Google Chrome', icon: null, volume: 81, muted: false, active: true, running: true },
         { name: 'Discord', label: 'Discord', icon: null, volume: 78, muted: false, active: false, running: false },
         { name: 'Gather', label: 'Gather', icon: null, volume: 95, muted: false, active: false, running: false },
-        { name: 'Spotify', label: 'Spotify', icon: null, volume: 53, muted: false, active: false, running: false },
-        { name: 'System', label: 'System sounds', icon: null, volume: 19, muted: false, active: false, running: true }
+        { name: 'Spotify', label: 'Spotify', icon: null, volume: 7, muted: false, active: false, running: false },
+        { name: 'SuperSquad', label: 'Super Squad', icon: null, volume: 36, muted: false, active: true, running: true },
+        { name: 'Slack', label: 'Slack', icon: null, volume: 70, muted: false, active: false, running: true },
+        { name: 'Zoom', label: 'Zoom', icon: null, volume: 90, muted: false, active: false, running: false }
       ]
     },
     pomodoro: { phase: 'idle', remaining: '25:00', blocks: 0, awaiting: false },

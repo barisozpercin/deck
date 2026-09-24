@@ -51,8 +51,8 @@ internal static class WidgetCatalog
         new("clock", "World Clock", false, [Cell()]),
         new("mixer", "Mixer", false,
         [
-            new("tall", "2×2 · 6 apps", 2, 2),
-            new("short", "2×1 · 3 apps", 2, 1)
+            new("tall", "2×2 · 8 apps", 2, 2),
+            new("short", "2×1 · 2 apps", 2, 1)
         ]),
         new("pomodoro", "Pomodoro", false, [Cell()]),
         new("stopwatch", "Stopwatch", false, [Cell()]),

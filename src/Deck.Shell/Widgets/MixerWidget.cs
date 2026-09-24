@@ -14,8 +14,11 @@ internal sealed class MixerWidget(WidgetContext context) : WidgetBase(context, "
 
     private DeckConfig Config => Context.Config;
 
-    /// <summary>How many rows fit: the 2×2 tile has room for six, the 2×1 for three. The master row takes one.</summary>
-    private int RowLimit => Variant == "short" ? 3 : 6;
+    /// <summary>
+    /// How many rows fit: the 2×2 tile has room for ten, the 2×1 for four. The pinned rows
+    /// (master, system sounds) count toward it.
+    /// </summary>
+    private int RowLimit => Variant == "short" ? 4 : 10;
 
     private const string MasterPrefix = "master:";
 
@@ -101,35 +104,49 @@ internal sealed class MixerWidget(WidgetContext context) : WidgetBase(context, "
     }
 
     /// <summary>
-    /// The rows the tile shows: the master level first, always, then the apps. Remembered apps
-    /// always appear, running or not, so a level can be set for something that isn't open yet;
-    /// whatever else is making sound fills the rest.
+    /// The rows the tile shows. Pinned first, always in the same place: the master level, then
+    /// system sounds. Then the apps: remembered ones always appear, running or not, so a level can
+    /// be set for something that isn't open yet; whatever else is making sound fills the rest.
     /// </summary>
     private object[] BuildRows()
     {
         var live = Mixer.Apps.ToDictionary(a => a.Name, StringComparer.OrdinalIgnoreCase);
+        string system = VolumeMixer.SystemSoundsName;
+        bool hasSystem = live.ContainsKey(system) || Config.MixerLevels.ContainsKey(system);
+        int pinned = hasSystem ? 2 : 1;
 
         string[] names = Config.MixerLevels.Keys
             .Concat(Mixer.Apps.Where(a => a.Active).Select(a => a.Name))
             .Concat(Mixer.Apps.Select(a => a.Name))
+            .Where(n => !string.Equals(n, system, StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(RowLimit - 1)
+            .Take(RowLimit - pinned)
             .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        object master = new
+        var rows = new List<object>
         {
-            name = "Master",
-            label = "Master",
-            icon = (string?)null,
-            volume = (int)Math.Round(Mixer.MasterVolume * 100),
-            muted = Mixer.MasterMuted,
-            active = true,
-            running = true,
-            master = true
+            new
+            {
+                name = "Master",
+                label = "Master",
+                icon = (string?)null,
+                volume = (int)Math.Round(Mixer.MasterVolume * 100),
+                muted = Mixer.MasterMuted,
+                active = true,
+                running = true,
+                master = true,
+                pinned = true,
+                // The rule under the pinned rows goes under the last of them.
+                divider = !hasSystem
+            }
         };
 
-        return names.Select(object (name) =>
+        if (hasSystem) rows.Add(AppRow(system, isPinned: true));
+        rows.AddRange(names.Select(name => AppRow(name, isPinned: false)));
+        return rows.ToArray();
+
+        object AppRow(string name, bool isPinned)
         {
             bool running = live.TryGetValue(name, out var app);
             string? path = running ? app!.Path : Config.MixerAppPaths.GetValueOrDefault(name);
@@ -141,7 +158,7 @@ internal sealed class MixerWidget(WidgetContext context) : WidgetBase(context, "
                 name,
                 // The system-sounds session borrows the volume mixer's icon, which also brings
                 // its name; "Volume Mixer" reads as the overall level, which it isn't.
-                label = name == VolumeMixer.SystemSoundsName ? "System sounds" : identity.DisplayName ?? name,
+                label = name == system ? "System sounds" : identity.DisplayName ?? name,
                 icon = identity.IconDataUri,
                 // A running app's real volume is the truth; a remembered one falls back to
                 // whatever level was stored for its next launch.
@@ -150,9 +167,11 @@ internal sealed class MixerWidget(WidgetContext context) : WidgetBase(context, "
                     : Config.MixerLevels.GetValueOrDefault(name, 100),
                 muted = running && app!.Muted,
                 active = running && app!.Active,
-                running
+                running,
+                pinned = isPinned,
+                divider = isPinned
             };
-        }).Prepend(master).ToArray();
+        }
     }
 
     /// <summary>The master row's drag and mute. Not remembered: it's Windows' own setting, not the deck's.</summary>

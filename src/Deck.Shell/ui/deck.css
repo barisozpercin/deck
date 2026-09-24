@@ -609,8 +609,9 @@ body.editing #editbar { display: flex; }
 /* --- mixer 2x1: three rows in one row's height --- */
 .w-mixer.v-short .mx-barwrap { padding: 5px 0; }
 
-/* --- mixer master row: the overall level sits apart from the apps, with a rule under it --- */
-.mx-row.master { padding-bottom: 4px; margin-bottom: 2px; border-bottom: 1px solid var(--line); }
+/* --- mixer pinned rows: the overall level and system sounds sit apart from the apps, with a
+   rule under the last of them --- */
+.mx-row.divider { padding-bottom: 4px; margin-bottom: 2px; border-bottom: 1px solid var(--line); }
 .mx-row.master .mx-name { font-size: 10.5px; letter-spacing: 0.03em; }
 .mx-row.master .mx-fill { background: var(--text); }
 .mx-row.master .mx-val { color: var(--text); }

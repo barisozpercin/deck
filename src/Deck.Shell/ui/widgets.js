@@ -115,6 +115,7 @@ function renderMixer(tile, rows, total, send) {
     const row = document.createElement('div');
     row.className = 'mx-row'
       + (r.master ? ' master' : '')
+      + (r.divider ? ' divider' : '')
       + (r.muted ? ' muted' : '')
       + (r.active ? '' : ' quiet')
       + (r.running === false ? ' offline' : '');
@@ -138,11 +139,11 @@ function renderMixer(tile, rows, total, send) {
       : (r.running === false
         ? r.name + ' — not running; this level applies when it next opens'
         : r.name + (r.muted ? ' — muted, click to unmute' : ' — click to mute'))
-        + '\nRight-click to remove it from the mixer';
+        + (r.pinned ? '' : '\nRight-click to remove it from the mixer');
     icon.title = tip;
     name.title = tip;
 
-    if (!r.master) {
+    if (!r.pinned) {
       row.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         e.stopPropagation();
