@@ -80,18 +80,23 @@ internal static class CalendarParser
     /// <summary>
     /// A rough upper bound, not an exact count — enough to tell a plausible meeting series from a
     /// rule that fires far too often, without evaluating it. SECONDLY and MINUTELY are always over
-    /// the limit. For HOURLY, the BYHOUR list (when present) says how many hours a day it can fire
-    /// in, else all 24; for DAILY and coarser, the same list says how many hours a day, else just 1
-    /// (the rule's own start time). Either way, BYMINUTE and BYSECOND (when present) multiply that
-    /// further, since each is another firing within the hour.
+    /// the limit, and so is HOURLY: no calendar app's UI creates an hourly repeat for a real
+    /// meeting, and Ical.Net 5.2.3 hangs expanding a HOURLY rule with a TZID across an autumn
+    /// daylight-saving change (reproduced: FREQ=HOURLY from a Europe/London DTSTART just before
+    /// the clock goes back never returns, though the same rule in UTC, or with INTERVAL=4, does)
+    /// — dropping HOURLY outright avoids the hang instead of trying to characterise every rule
+    /// shape that can trigger it. For DAILY and coarser, the BYHOUR list (when present) says how
+    /// many hours a day it can fire in, else just 1 (the rule's own start time); BYMINUTE and
+    /// BYSECOND (when present) multiply that further, since each is another firing within the hour.
     /// </summary>
     private static double EstimatedOccurrencesPerDay(RecurrenceRule rule)
     {
-        if (rule.Frequency is Ical.Net.FrequencyType.Secondly or Ical.Net.FrequencyType.Minutely) return double.MaxValue;
+        if (rule.Frequency is Ical.Net.FrequencyType.Secondly or Ical.Net.FrequencyType.Minutely or Ical.Net.FrequencyType.Hourly)
+        {
+            return double.MaxValue;
+        }
 
-        int hoursPerDay = rule.ByHour.Count > 0
-            ? rule.ByHour.Count
-            : rule.Frequency == Ical.Net.FrequencyType.Hourly ? 24 : 1;
+        int hoursPerDay = rule.ByHour.Count > 0 ? rule.ByHour.Count : 1;
 
         return (double)hoursPerDay * Math.Max(1, rule.ByMinute.Count) * Math.Max(1, rule.BySecond.Count);
     }
@@ -185,14 +190,18 @@ internal static class CalendarParser
 
     /// <summary>
     /// Applies the per-event cap, the overall backstop cap, and the window's early stop while
-    /// materialising. The per-event cap only stops adding that event's own further occurrences —
-    /// enumeration carries on so every other event still gets its share. <c>truncated</c> is set
-    /// if either cap dropped anything.
+    /// materialising. The per-event cap only counts an occurrence if it ends after now — a capped
+    /// series keeps every occurrence up to the present uncapped, and only ever loses occurrences
+    /// further out, so what a widget would actually show first (today and soon) survives even when
+    /// a series is capped. The per-event cap only stops adding that event's own further future
+    /// occurrences — enumeration carries on so every other event still gets its share. <c>truncated</c>
+    /// is set if either cap dropped anything.
     /// </summary>
     private static List<Occurrence> Bounded(IEnumerable<Occurrence> occurrences, DateTime stopUtc, out bool truncated)
     {
         var list = new List<Occurrence>();
         var perEvent = new Dictionary<object, int>(ReferenceEqualityComparer.Instance);
+        DateTime now = DateTime.Now;
         truncated = false;
 
         foreach (var occurrence in occurrences)
@@ -205,15 +214,22 @@ internal static class CalendarParser
                 break;
             }
 
-            object source = occurrence.Source;
-            int countSoFar = perEvent.TryGetValue(source, out int n) ? n : 0;
-            if (countSoFar >= MaxOccurrencesPerEvent)
+            var endTime = occurrence.Period.EffectiveEndTime ?? occurrence.Period.StartTime;
+            bool isFuture = ToLocal(endTime) > now;
+
+            if (isFuture)
             {
-                truncated = true;
-                continue;
+                object source = occurrence.Source;
+                int countSoFar = perEvent.TryGetValue(source, out int n) ? n : 0;
+                if (countSoFar >= MaxOccurrencesPerEvent)
+                {
+                    truncated = true;
+                    continue;
+                }
+
+                perEvent[source] = countSoFar + 1;
             }
 
-            perEvent[source] = countSoFar + 1;
             list.Add(occurrence);
         }
 

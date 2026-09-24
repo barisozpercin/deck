@@ -21,6 +21,13 @@ internal sealed class CalendarService : SharedService, IDisposable
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(10);
 
     /// <summary>
+    /// The most one link's expansion may run before this refresh gives up on it and moves to the
+    /// next link, so a feed whose repeats hang the library in some way pruning doesn't already
+    /// catch can never stop every other link from refreshing.
+    /// </summary>
+    private static readonly TimeSpan ExpandTimeout = TimeSpan.FromSeconds(20);
+
+    /// <summary>
     /// The fixed window every refresh expands into. Month can page back and forward up to a year
     /// from today; Agenda only needs the next 7 days, comfortably inside it. Expanding once per
     /// refresh, for this whole span, is what lets <see cref="Entries"/> be a cheap filter on the
@@ -34,6 +41,17 @@ internal sealed class CalendarService : SharedService, IDisposable
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(20) };
     private readonly DispatcherTimer _timer = new() { Interval = Interval };
     private readonly Dictionary<string, IReadOnlyList<CalendarEntry>> _entries = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// SHA-256 hashes of ics text whose expansion has already timed out once. Ical.Net 5.2.3 gives
+    /// no way to cancel an expansion already running, so a timed-out background task keeps its
+    /// thread running forever with nothing this class can do to stop it. Checking this set before
+    /// expanding is what keeps a stuck link from abandoning a fresh thread on every refresh: the
+    /// same bytes are skipped straight to "too complex to read" instead of being retried, and only
+    /// a link whose content actually changes (a different hash) is expanded again.
+    /// </summary>
+    private readonly HashSet<string> _stuckContentHashes = new(StringComparer.Ordinal);
+
     private bool _refreshing;
     private bool _refreshAgain;
     private bool _fetchedOnce;
@@ -145,7 +163,28 @@ internal sealed class CalendarService : SharedService, IDisposable
             try
             {
                 string ics = await _http.GetStringAsync(ToHttps(link));
-                var (entries, truncated) = await Task.Run(() => CalendarParser.Expand(ics, from, to));
+                string contentHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(ics)));
+
+                if (_stuckContentHashes.Contains(contentHash))
+                {
+                    status.Add(new CalendarLinkStatus(link, false, "too complex to read"));
+                    continue;
+                }
+
+                var expand = Task.Run(() => CalendarParser.Expand(ics, from, to));
+                var finished = await Task.WhenAny(expand, Task.Delay(ExpandTimeout));
+
+                if (finished != expand)
+                {
+                    // The Task.Run above is still out there, running on a thread pool thread we
+                    // can't reach — see _stuckContentHashes for why remembering this content is
+                    // what stops that from happening again on the next refresh.
+                    _stuckContentHashes.Add(contentHash);
+                    status.Add(new CalendarLinkStatus(link, false, "too complex to read"));
+                    continue;
+                }
+
+                var (entries, truncated) = await expand;
                 _entries[link] = entries;
 
                 int upcoming = entries.Count(e => e.End > DateTime.Now);

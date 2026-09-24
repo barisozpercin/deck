@@ -326,7 +326,7 @@ public class CalendarParserTests
     {
         // A shared cap across the whole stream used to run out on an ordinary busy feed: fifty
         // open-ended DAILY series easily add up to more than a single flat cap over a year-long
-        // horizon. The per-event cap (2000, comfortably above ~426 daily occurrences per series
+        // horizon. The per-event cap (2000, comfortably above ~457 daily occurrences per series
         // over this horizon) must not touch any of them, so nothing crowds out the normal event.
         var (from, to) = CalendarService.Horizon();
 
@@ -369,11 +369,12 @@ public class CalendarParserTests
     }
 
     [Fact]
-    public void An_open_ended_hourly_event_is_capped_per_event_and_marked_truncated()
+    public void An_open_ended_hourly_event_is_dropped_instead_of_expanded()
     {
-        // A bare FREQ=HOURLY (no BYHOUR/BYMINUTE) estimates at 24/day, under Prune's 48/day limit,
-        // so it survives pruning; over a long enough window it must instead be stopped by the
-        // per-event cap, and that must be reported as a truncation.
+        // A bare FREQ=HOURLY (no BYHOUR/BYMINUTE) estimates at 24/day, under Prune's 48/day limit
+        // on estimated noise alone — but HOURLY is always dropped regardless of the estimate (see
+        // Expand_on_an_hourly_rule_across_an_autumn_dst_change_does_not_hang below for why), so it
+        // never reaches expansion at all, and the drop isn't reported as a truncation.
         const string ics = """
             BEGIN:VCALENDAR
             VERSION:2.0
@@ -396,12 +397,97 @@ public class CalendarParserTests
 
         var (entries, truncated) = CalendarParser.Expand(ics, new DateTime(2026, 1, 1), new DateTime(2026, 10, 1));
 
-        Assert.True(truncated);
-
-        // Not exactly 2000: a day's worth of occurrences before fromLocal are also evaluated (see
-        // the "day early" comment in Entries) and spend the per-event budget before being filtered
-        // back out here, so the visible count is the cap minus that day's worth.
-        Assert.InRange(entries.Count(e => e.Title == "Hourly forever"), 1900, 2000);
+        Assert.False(truncated);
+        Assert.DoesNotContain(entries, e => e.Title == "Hourly forever");
         Assert.Contains(entries, e => e.Title == "Normal");
+    }
+
+    [Fact]
+    public void Expand_on_an_hourly_rule_across_an_autumn_dst_change_does_not_hang()
+    {
+        // Reproduces the reported hang: Ical.Net 5.2.3 loops forever expanding FREQ=HOURLY from a
+        // Europe/London DTSTART across the 25 Oct 2026 clock change (BST -> GMT); the same shape
+        // in UTC, or with INTERVAL=4, does not hang, but the fix drops every HOURLY rule outright
+        // rather than trying to characterise exactly which ones do. If Prune didn't remove this
+        // event, this test would never finish rather than merely fail.
+        const string ics = """
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:deck-tests
+            BEGIN:VEVENT
+            UID:hourly-dst
+            DTSTART;TZID=Europe/London:20261024T220000
+            DTEND;TZID=Europe/London:20261024T223000
+            RRULE:FREQ=HOURLY
+            SUMMARY:Hourly across DST
+            END:VEVENT
+            BEGIN:VEVENT
+            UID:normal-1
+            DTSTART:20261024T090000Z
+            DTEND:20261024T100000Z
+            SUMMARY:Normal
+            END:VEVENT
+            END:VCALENDAR
+            """;
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var (entries, _) = CalendarParser.Expand(ics, new DateTime(2026, 10, 20), new DateTime(2026, 10, 31));
+        stopwatch.Stop();
+
+        Assert.Contains(entries, e => e.Title == "Normal");
+        Assert.True(stopwatch.ElapsedMilliseconds < 5000, $"took {stopwatch.ElapsedMilliseconds}ms");
+    }
+
+    [Fact]
+    public void A_busy_daily_series_is_capped_per_event_but_keeps_its_near_term_occurrences()
+    {
+        // Forty times a day (still under Prune's 48/day threshold, so this survives pruning) means
+        // the horizon's ~61-day past segment (its start, two months back, up to now) alone holds
+        // over 2000 occurrences of this series — more than the whole per-event cap. If the cap
+        // still counted past occurrences the way it used to, that budget would already be spent
+        // before enumeration ever reached today, and every future occurrence — including
+        // tomorrow's — would be gone. Counting only future occurrences keeps every past one
+        // regardless, and gives the future its own separate budget, so tomorrow survives and only
+        // the far end of the horizon (where that budget runs out) is what gets dropped.
+        var (from, to) = CalendarService.Horizon();
+        string byHour = string.Join(",", Enumerable.Range(0, 20));
+
+        string ics = $"""
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:deck-tests
+            BEGIN:VEVENT
+            UID:busy-daily
+            DTSTART:20180101T000000Z
+            DTEND:20180101T001500Z
+            RRULE:FREQ=DAILY;BYHOUR={byHour};BYMINUTE=0,30
+            SUMMARY:Busy daily
+            END:VEVENT
+            BEGIN:VEVENT
+            UID:normal-1
+            DTSTART:20260924T090000Z
+            DTEND:20260924T100000Z
+            SUMMARY:Normal
+            END:VEVENT
+            END:VCALENDAR
+            """;
+
+        var (entries, truncated) = CalendarParser.Expand(ics, from, to);
+
+        Assert.True(truncated);
+        Assert.Contains(entries, e => e.Title == "Normal");
+
+        var busy = entries.Where(e => e.Title == "Busy daily").ToList();
+        Assert.NotEmpty(busy);
+
+        // Kept even though the past segment alone exceeds the cap: past occurrences never count
+        // against the per-event budget.
+        Assert.Contains(busy, e => e.Start < DateTime.Now && e.Start > DateTime.Now.AddDays(-2));
+
+        // Kept because the future gets its own budget, separate from the past.
+        Assert.Contains(busy, e => e.Start > DateTime.Now && e.Start < DateTime.Now.AddDays(2));
+
+        // The far end of the horizon is what the future's own budget gave up instead.
+        Assert.DoesNotContain(busy, e => e.Start > to.AddDays(-2));
     }
 }
